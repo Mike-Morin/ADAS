@@ -1,3 +1,5 @@
+#include "BLESerial.h"
+
 #include "MS5607/IntersemaBaro.h"
 
 #include <CurieTimerOne.h>
@@ -5,6 +7,7 @@
 #include <SD.h>
 #include<Wire.h>
 #include <CurieIMU.h>
+//#include <CurieBLE.h>
 
 #define ADAS_ERROR 2 //Allowed error in ADAS motion due to overshoot. (encoder pulses) 
 #define ADAS_SLOW_THRESH 100 // Number of pulses away from target at which ADAS slows down. (encoder pulses)
@@ -25,6 +28,7 @@ const byte encoderpinA = 7;
 const byte limitswitchpin = 10;
 const byte manualretractpin = 9;
 const byte beeperpin = 1;
+
 
 /* ADAS variables */
 
@@ -52,6 +56,7 @@ const int chipSelect = 4;
 
 File ADASdatafile;
 
+
 void ADASWDtimeout() {
   /* Executed by main watchdog timer if it times out */
   
@@ -63,6 +68,8 @@ void ADASWDtimeout() {
 }
 
 void setup() {
+      BLESerial.setName("ADAS");
+      BLESerial.begin();
   Serial.begin(9600);
 
   /* For the altimeter */
@@ -73,10 +80,6 @@ void setup() {
   CurieIMU.setAccelerometerRange(16);
   CurieIMU.setGyroRate(3200);
   CurieIMU.setAccelerometerRate(1600);
-
-  /* For the SD card */
-  digitalWrite(8, HIGH); // 8 should be wired to digital high physically...
-  delay(1000);
 
   while (!SD.begin(chipSelect)) { //Stop everything if we cant see the SD card!
     Serial.println("Card failed or not present.");
@@ -477,6 +480,7 @@ int ADASselftest() {
 
 void loop() {
   CurieTimerOne.restart(WDUS); //Restarts watchdog timer.
+  BLESerial.println("Hello, this is ADAS.");
   getData();
   writeData();
   isLaunch();
