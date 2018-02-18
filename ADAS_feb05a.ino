@@ -29,6 +29,8 @@ const byte limitswitchpin = 10;
 const byte manualretractpin = 9;
 const byte beeperpin = 1;
 
+const int SD_PIN = 4;
+
 
 /* ADAS variables */
 
@@ -52,7 +54,6 @@ ADASstate ADAS;
 float ADASdatabuf[16][10];
 
 Intersema::BaroPressure_MS5607B MS5607alt(true);
-const int chipSelect = 4;
 
 File ADASdatafile;
 
@@ -82,30 +83,34 @@ void setup() {
   CurieIMU.setGyroRate(3200);
   CurieIMU.setAccelerometerRate(1600);
 
-  while (!SD.begin(chipSelect)) { //Stop everything if we cant see the SD card!
+  while (!SD.begin(SD_PIN)) { //Stop everything if we cant see the SD card!
     Serial.println("Card failed or not present.");
     ADASbeep(-1);
   }
+
   Serial.println("Card OK");
   ADASbeep(1);
 
   /* ADAS control stuff */
+  pinMode(9, INPUT_PULLUP); // QUERY: What is this for?
+
   pinMode(hbridgeIN1pin, OUTPUT); //hbridge IN1
-  pinMode(9, INPUT_PULLUP);
   pinMode(hbridgeIN2pin, OUTPUT); //hbridge IN2
   pinMode(hbridgeENpin, OUTPUT); //hbridge EN pin for pwm
   pinMode(encoderpinA, INPUT); //encoder A (or B... either works).
   pinMode(limitswitchpin, INPUT);
-  attachInterrupt(digitalPinToInterrupt(encoderpinA), ADASpulse, RISING); //Catch interrupts from the encoder.
-  attachInterrupt(digitalPinToInterrupt(limitswitchpin), ADASzero, FALLING);
-  attachInterrupt(digitalPinToInterrupt(9), ADASretract, FALLING);
 
-  delay(100);
+  attachInterrupt(digitalPinToInterrupt(encoderpinA), ADASpulse, RISING); //Catch interrupts from the encoder.
+  attachInterrupt(digitalPinToInterrupt(limitswitchpin), ADASzero, FALLING); // catch when the limit switch is disengaged
+  attachInterrupt(digitalPinToInterrupt(9), ADASretract, FALLING); // Pin 9 again?
+
+  delay(100); // QUERY: why wait 100 ms?
 
   /* Run self-test until pass. */
   while (ADAS.error != 0) {
     ADASbeep(ADASselftest());
   }
+
   CurieTimerOne.start(WDUS, &ADASWDtimeout); //Starts watchdog timer.
 }
 
@@ -117,7 +122,7 @@ void ADASbeep(int code) {
     digitalWrite(beeperpin, HIGH);
     return;
   }
-  
+
   if (code < 0) {
     // Critical Errors are negative
     // if there is a critical error there is a 2 second long beep before the code
@@ -145,7 +150,7 @@ void ADASbeep(int code) {
 
 void ADASretract() {
   /* Triggered manually by the external button */
-  
+  // QUERY: No checking if the thing is finished retracting?
   digitalWrite(hbridgeIN1pin, LOW);
   digitalWrite(hbridgeIN2pin, HIGH);
 }
@@ -158,6 +163,8 @@ void ADASpulse() {
      using port manipulation but the indirect approach here seems reliable.
   */
 
+
+  // Query: Why does this not result in an error being beeped?
   if (ADAS.emergencystop) { //This is a fatal condition. ADAS must be reset to clear.
     ADAS.desiredpos = ADAS.pulsect;
     return;
@@ -320,6 +327,7 @@ void getData() {
 void writeData() {
   /* Writes all the data */
   
+  // TODO: this could probably be simplified and/or be made faster by preformatting the string that is pushed to the sd card
   ADASdatafile = SD.open("ADASdata.txt", FILE_WRITE);
   if (ADASdatafile) {
     for (int j = 0; j < 10; j++) { //10 blocks of
@@ -340,6 +348,7 @@ void writeData() {
     ADASdatafile.close();
   } else {
     // if the file didn't open, print an error:
+    // NOTE: this doesnt do much in the air
     Serial.println("error opening test.txt");
     ADAS.error = -9;
     ADASbeep(-9);
