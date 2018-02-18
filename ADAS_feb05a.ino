@@ -33,8 +33,6 @@ const int SD_PIN = 4;
 
 
 /* ADAS variables */
-
-
 typedef struct {
   boolean launched = false;            //Set to true when accelerometer detects launch condition.
   volatile int dir = 0;                //Current ADAS direction.
@@ -61,63 +59,20 @@ File ADASdatafile;
 void ADASWDtimeout() {
   /* Executed by main watchdog timer if it times out */
   
-  ADAS.emergencystop = true;
-  digitalWrite(hbridgeIN1pin, HIGH);
+  ADAS.emergencystop = true; // emergency stop
+  digitalWrite(hbridgeIN1pin, HIGH); // stop the motor completely
   digitalWrite(hbridgeIN2pin, HIGH);
   ADAS.desiredpos = ADAS.pulsect;
-  ADASbeep(-99);
-}
-
-void setup() {
-  BLESerial.setName("ADAS");
-  BLESerial.begin();
-
-  Serial.begin(9600);
-
-  /* For the altimeter */
-  MS5607alt.init();
-
-  /* For the built-in Curie IMU */
-  CurieIMU.begin();
-  CurieIMU.setAccelerometerRange(16);
-  CurieIMU.setGyroRate(3200);
-  CurieIMU.setAccelerometerRate(1600);
-
-  while (!SD.begin(SD_PIN)) { //Stop everything if we cant see the SD card!
-    Serial.println("Card failed or not present.");
-    ADASbeep(-1);
-  }
-
-  Serial.println("Card OK");
-  ADASbeep(1);
-
-  /* ADAS control stuff */
-  pinMode(9, INPUT_PULLUP); // QUERY: What is this for?
-
-  pinMode(hbridgeIN1pin, OUTPUT); //hbridge IN1
-  pinMode(hbridgeIN2pin, OUTPUT); //hbridge IN2
-  pinMode(hbridgeENpin, OUTPUT); //hbridge EN pin for pwm
-  pinMode(encoderpinA, INPUT); //encoder A (or B... either works).
-  pinMode(limitswitchpin, INPUT);
-
-  attachInterrupt(digitalPinToInterrupt(encoderpinA), ADASpulse, RISING); //Catch interrupts from the encoder.
-  attachInterrupt(digitalPinToInterrupt(limitswitchpin), ADASzero, FALLING); // catch when the limit switch is disengaged
-  attachInterrupt(digitalPinToInterrupt(9), ADASretract, FALLING); // Pin 9 again?
-
-  delay(100); // QUERY: why wait 100 ms?
-
-  /* Run self-test until pass. */
-  while (ADAS.error != 0) {
-    ADASbeep(ADASselftest());
-  }
-
-  CurieTimerOne.start(WDUS, &ADASWDtimeout); //Starts watchdog timer.
+  ADASbeep(-99); // beep 
 }
 
 void ADASbeep(int code) {
-  /* Critical errors start with a 2s long beep.
-     Non-critical notifications are all short beeps.
+  /*
+    Plays informational beeps, codes are integers, negative codes are errors,
+    positive codes are purely informational
+    error code -99 is an extreme error and is indicated by a constant tone
   */
+
   if (code == -99) { //Motor emergency stop. Beep forever.
     digitalWrite(beeperpin, HIGH);
     return;
@@ -364,22 +319,22 @@ void ADASlaunchtest() {
     if (curmillis == 0) {
       curmillis = millis();
     }
-    if ((((curmillis) >= 4000)) && ((curmillis) < 5000)) {
+    if (curmillis >= 4000 && curmillis < 5000) {
       ADAS.desiredpos = 44;
     }
-    if (((curmillis) >= 5000) && ((curmillis) < 6000)) {
+    if (curmillis >= 5000 && curmillis < 6000) {
       ADAS.desiredpos = 88;
     }
-    if (((curmillis) >= 6000) && ((curmillis) < 7000)) {
+    if (curmillis >= 6000 && curmillis < 7000) {
       ADAS.desiredpos = 132;
     }
-    if (((curmillis) >= 7000) && ((curmillis) < 8000)) {
+    if (curmillis >= 7000 && curmillis < 8000) {
       ADAS.desiredpos = 176;
     }
-    if (((curmillis) >= 8000) && ((curmillis) < 9000)) {
+    if (curmillis >= 8000 && curmillis < 9000) {
       ADAS.desiredpos = 200;
     }
-    if (((curmillis) >= 20000)) {
+    if (curmillis >= 20000) {
       ADASclose();
     }
   }
@@ -483,6 +438,52 @@ int ADASselftest() {
   }
   ADAS.error = 0;
   return ADAS.error; // All tests passed.
+}
+
+void setup() {
+  BLESerial.setName("ADAS");
+  BLESerial.begin();
+
+  Serial.begin(9600);
+
+  /* For the altimeter */
+  MS5607alt.init();
+
+  /* For the built-in Curie IMU */
+  CurieIMU.begin();
+  CurieIMU.setAccelerometerRange(16);
+  CurieIMU.setGyroRate(3200);
+  CurieIMU.setAccelerometerRate(1600);
+
+  while (!SD.begin(SD_PIN)) { //Stop everything if we cant see the SD card!
+    Serial.println("Card failed or not present.");
+    ADASbeep(-1);
+  }
+
+  Serial.println("Card OK");
+  ADASbeep(1);
+
+  /* ADAS control stuff */
+  pinMode(9, INPUT_PULLUP); // QUERY: What is this for?
+
+  pinMode(hbridgeIN1pin, OUTPUT); //hbridge IN1
+  pinMode(hbridgeIN2pin, OUTPUT); //hbridge IN2
+  pinMode(hbridgeENpin, OUTPUT); //hbridge EN pin for pwm
+  pinMode(encoderpinA, INPUT); //encoder A (or B... either works).
+  pinMode(limitswitchpin, INPUT);
+
+  attachInterrupt(digitalPinToInterrupt(encoderpinA), ADASpulse, RISING); //Catch interrupts from the encoder.
+  attachInterrupt(digitalPinToInterrupt(limitswitchpin), ADASzero, FALLING); // catch when the limit switch is disengaged
+  attachInterrupt(digitalPinToInterrupt(9), ADASretract, FALLING); // Pin 9 again?
+
+  delay(100); // QUERY: why wait 100 ms?
+
+  /* Run self-test until pass. */
+  while (ADAS.error != 0) {
+    ADASbeep(ADASselftest());
+  }
+
+  CurieTimerOne.start(WDUS, &ADASWDtimeout); //Starts watchdog timer.
 }
 
 
