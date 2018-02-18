@@ -1,5 +1,7 @@
 # Critical Errors
 
+Critical Errors are identified by a 2 second beep followed by a number of beeps indicating the error number. The error number's meanings are below
+
 ### Error: 1
 
 Meaning: Card is either broken or is non existant
@@ -41,6 +43,8 @@ Meaning: Could not open the sd card for writing
 Meaning: Watchdog timed out meaning something was taking too long to execute OR ADAS reached its absolute limit
 
 # Information Codes
+
+Information codes are indicated by a 400ms beep that is followed by a number of beeps indicating the code. The code's meanings are below
 
 ### Code: 1
 

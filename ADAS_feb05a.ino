@@ -113,37 +113,33 @@ void ADASbeep(int code) {
   /* Critical errors start with a 2s long beep.
      Non-critical notifications are all short beeps.
   */
-
   if (code == -99) { //Motor emergency stop. Beep forever.
     digitalWrite(beeperpin, HIGH);
     return;
   }
-  // critical error will start with a 2 second beep 
-  // followed by the the error number in beeps
-  if (code < 0)
-  {
+  
+  if (code < 0) {
+    // Critical Errors are negative
+    // if there is a critical error there is a 2 second long beep before the code
     digitalWrite(beeperpin, HIGH);
     delay(2000);
     digitalWrite(beeperpin, LOW);
     delay(1000);
-    for (int i = 0; i < abs(code); i++) {
-      digitalWrite(beeperpin, HIGH);
-      delay(1000);
-      digitalWrite(beeperpin, LOW);
-      delay(200);
-    }
-  }
-  if (code >= 0) {
+  } else {
+    // any non negative code is a information code
+    // there is a 400ms long beep before these codes
     digitalWrite(beeperpin, HIGH);
     delay(400);
     digitalWrite(beeperpin, LOW);
     delay(1000);
-    for (int i = 0; i < code; i++) {
-      digitalWrite(beeperpin, HIGH);
-      delay(200);
-      digitalWrite(beeperpin, LOW);
-      delay(200);
-    }
+  }
+
+  // beep out the code 
+  for (int i = 0; i < abs(code); i++) {
+    digitalWrite(beeperpin, HIGH);
+    delay(1000);
+    digitalWrite(beeperpin, LOW);
+    delay(200);
   }
 }
 
