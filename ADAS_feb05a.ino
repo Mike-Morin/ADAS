@@ -68,8 +68,9 @@ void ADASWDtimeout() {
 }
 
 void setup() {
-      BLESerial.setName("ADAS");
-      BLESerial.begin();
+  BLESerial.setName("ADAS");
+  BLESerial.begin();
+
   Serial.begin(9600);
 
   /* For the altimeter */

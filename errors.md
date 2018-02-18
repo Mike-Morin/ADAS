@@ -1,7 +1,4 @@
-
-
-
-Critical Errors
+# Critical Errors
 
 ## Error: 1
 
@@ -43,3 +40,4 @@ Meaning: Could not open the sd card for writing
 
 Meaning: Watchdog timed out meaning something was taking too long to execute OR ADAS reached its absolute limit
 
+#
