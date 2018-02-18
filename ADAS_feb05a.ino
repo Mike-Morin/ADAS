@@ -117,6 +117,8 @@ void ADASbeep(int code) {
     digitalWrite(beeperpin, HIGH);
     return;
   }
+  // critical error will start with a 2 second beep 
+  // followed by the the error number in beeps
   if (code < 0)
   {
     digitalWrite(beeperpin, HIGH);
