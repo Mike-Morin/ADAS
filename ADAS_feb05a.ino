@@ -5,7 +5,7 @@
 #include <CurieTimerOne.h>
 #include <SPI.h>
 #include <SD.h>
-#include<Wire.h>
+#include <Wire.h>
 #include <CurieIMU.h>
 //#include <CurieBLE.h>
 
@@ -24,10 +24,16 @@
 const byte hbridgeENpin = 3;
 const byte hbridgeIN1pin = 2; //h-bridge board pins 2 & 3
 const byte hbridgeIN2pin = 5;//h-bridge board pins  1 & 4
-const byte encoderpinA = 7;
-const byte limitswitchpin = 10;
-const byte manualretractpin = 9;
+const byte encoderpinA = 6;
+const byte limitswitchpin = 4;
 const byte beeperpin = 1;
+
+/* Pin defs in the SPI library
+ * SS	-- pin 10
+ * MOSI -- pin 11
+ * MISO -- pin 12
+ * SCK  -- pin 13
+ */
 
 
 /* ADAS variables */
@@ -52,7 +58,9 @@ ADASstate ADAS;
 float ADASdatabuf[16][10];
 
 Intersema::BaroPressure_MS5607B MS5607alt(true);
-const int chipSelect = 4;
+
+
+//const int chipSelect = 4;
 
 File ADASdatafile;
 
