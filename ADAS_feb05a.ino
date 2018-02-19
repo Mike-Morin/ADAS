@@ -292,8 +292,8 @@ void writeData() {
      is still enabled to stop ADAS if the the SD
      write locks up.
   */
-  detachInterrupt(encoderpinA);
-  detachInterrupt(limitswitchpin);
+
+  DetachInterrupts();
 
   ADASdatafile = SD.open("ADASdata.txt", FILE_WRITE);
 
@@ -321,8 +321,8 @@ void writeData() {
     ADAS.error = -9;
     ADASbeep(-9);
   }
-  attachInterrupt(digitalPinToInterrupt(encoderpinA), ADASpulse, RISING); //Catch interrupts from the encoder.
-  attachInterrupt(digitalPinToInterrupt(limitswitchpin), ADASzero, FALLING); // catch when the limit switch is disengaged
+
+  AttachInterrupts(); // attach interupts again
 }
 
 
@@ -459,6 +459,16 @@ int ADASselftest() {
   return ADAS.error; // All tests passed.
 }
 
+void AttachInterrupts() {
+  attachInterrupt(digitalPinToInterrupt(encoderpinA), ADASpulse, RISING); //Catch interrupts from the encoder.
+  attachInterrupt(digitalPinToInterrupt(limitswitchpin), ADASzero, FALLING); // catch when the limit switch is disengaged
+}
+
+void DetachInterrupts() {
+  detachInterrupt(encoderpinA);
+  detachInterrupt(limitswitchpin);
+}
+
 void setup() {
   BLESerial.setName("ADAS");
   BLESerial.begin();
@@ -493,9 +503,7 @@ void setup() {
   pinMode(encoderpinA, INPUT); //encoder A (or B... either works).
   pinMode(limitswitchpin, INPUT);
 
-  attachInterrupt(digitalPinToInterrupt(encoderpinA), ADASpulse, RISING); //Catch interrupts from the encoder.
-  attachInterrupt(digitalPinToInterrupt(limitswitchpin), ADASzero, FALLING); // catch when the limit switch is disengaged
-
+  AttachInterrupts();
 
   /* Run self-test until pass. */
   while (ADAS.error != 0) {
