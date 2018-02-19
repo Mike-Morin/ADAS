@@ -442,10 +442,11 @@ int ADASselftest() {
 
   char ADASteststring[11] = "TESTING123";
   File ADAStestfile;
+
+  DetachInterrupts();
   ADAStestfile = SD.open("ADAStestfile.txt", FILE_WRITE);
   ADAStestfile.println(ADASteststring);
   ADASdatafile.close();
-
   ADAStestfile = SD.open("ADAStestfile.txt");
   char readtestbuf[11];
   for (int i = 0; i < 11 && ADASdatafile.available(); i++) {
@@ -455,16 +456,24 @@ int ADASselftest() {
     }
   }
   ADAStestfile.close();
+  AttachInterrupts();
+
   ADAS.error = 0;
   return ADAS.error; // All tests passed.
 }
 
 void AttachInterrupts() {
+  /*
+    All interrupts that should be detached for sd card reading/writting
+  */
   attachInterrupt(digitalPinToInterrupt(encoderpinA), ADASpulse, RISING); //Catch interrupts from the encoder.
   attachInterrupt(digitalPinToInterrupt(limitswitchpin), ADASzero, FALLING); // catch when the limit switch is disengaged
 }
 
 void DetachInterrupts() {
+  /*
+    All interrupts that should be reatached after sd card reading/writting
+  */
   detachInterrupt(encoderpinA);
   detachInterrupt(limitswitchpin);
 }
