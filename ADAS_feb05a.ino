@@ -286,6 +286,15 @@ void writeData() {
   */
 
   // TODO: this could probably be simplified and/or be made faster by preformatting the string that is pushed to the sd card
+
+  /* Interrupts must be disabled or the SD card
+     will be corrupted upon write. The watchdog
+     is still enabled to stop ADAS if the the SD
+     write locks up.
+  */
+  detachInterrupt(encoderpinA);
+  detachInterrupt(limitswitchpin);
+
   ADASdatafile = SD.open("ADASdata.txt", FILE_WRITE);
 
   if (ADASdatafile) {
@@ -312,6 +321,8 @@ void writeData() {
     ADAS.error = -9;
     ADASbeep(-9);
   }
+  attachInterrupt(digitalPinToInterrupt(encoderpinA), ADASpulse, RISING); //Catch interrupts from the encoder.
+  attachInterrupt(digitalPinToInterrupt(limitswitchpin), ADASzero, FALLING); // catch when the limit switch is disengaged
 }
 
 
@@ -489,7 +500,7 @@ void setup() {
   /* Run self-test until pass. */
   while (ADAS.error != 0) {
     ADASbeep(ADASselftest());
-    }
+  }
 
   CurieTimerOne.start(WDUS, &ADASWDtimeout); //Starts watchdog timer.
 }
