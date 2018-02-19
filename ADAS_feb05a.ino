@@ -21,12 +21,12 @@
 #define WDUS 1000000 //Number of microseconds until watchdog times out and e-stops ADAS. (1000000us = 1s)
 
 /* Pin defs */
-const byte hbridgeENpin = 3;
+const byte hbridgeENpin = 4;
 const byte hbridgeIN1pin = 2; //h-bridge board pins 2 & 3
-const byte hbridgeIN2pin = 5;//h-bridge board pins  1 & 4
-const byte encoderpinA = 6;
-const byte limitswitchpin = 4;
-const byte beeperpin = 1;
+const byte hbridgeIN2pin = 6;//h-bridge board pins  1 & 4
+const byte encoderpinA = 7;
+const byte limitswitchpin = 5;
+const byte beeperpin = 3;
 
 /* Pin defs in the SPI library
  * SS	-- pin 10
