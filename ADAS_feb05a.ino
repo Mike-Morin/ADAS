@@ -477,6 +477,7 @@ File open(char[] filename, byte mode) {
   */
 
   // NOTE: motor overshoot can happen
+  MotorStop();
   DetachInterrupts();
   return SD.open(filename, mode);
 }
@@ -487,6 +488,7 @@ void close(File file) {
   */
   file.close();
   AttachInterrupts();
+  MotorMove(ADAS.dir);
 }
 
 void MotorStop() {
