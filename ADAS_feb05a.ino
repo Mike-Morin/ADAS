@@ -67,8 +67,7 @@ void ADASWDtimeout() {
   /* Executed by main watchdog timer if it times out */
 
   ADAS.emergencystop = true; // emergency stop
-  digitalWrite(hbridgeIN1pin, HIGH); // stop the motor completely
-  digitalWrite(hbridgeIN2pin, HIGH);
+  MotorStop();
   ADAS.desiredpos = ADAS.pulsect;
   ADASbeep(-99); // beep
 }
@@ -159,8 +158,7 @@ void ADASzero() {
   */
   Serial.println("Limit Switch Triggered");
   ADAS.pulsect = 0;
-  digitalWrite(hbridgeIN1pin, HIGH);
-  digitalWrite(hbridgeIN2pin, HIGH);
+  MotorStop();
 }
 
 void ADASmove() {
@@ -169,8 +167,7 @@ void ADASmove() {
   */
   static unsigned int lastmillis = 0;
   if (ADAS.emergencystop) {
-    digitalWrite(hbridgeIN1pin, HIGH);
-    digitalWrite(hbridgeIN2pin, HIGH);
+    MotorStop();
     ADASbeep(-99);
     return;
   }
@@ -179,17 +176,10 @@ void ADASmove() {
   } else {
     digitalWrite(hbridgeENpin, HIGH);
   }
-  if (ADAS.dir == 1) { //forward
-    digitalWrite(hbridgeIN1pin, HIGH);
-    digitalWrite(hbridgeIN2pin, LOW);
-  } else if (ADAS.dir == -1) { //reverse
-    digitalWrite(hbridgeIN1pin, LOW);
-    digitalWrite(hbridgeIN2pin, HIGH);
-  } else if (ADAS.dir == 0) { // STOP
+  if (ADAS.dir == 0) {
     ADAS.slow = false;
-    digitalWrite(hbridgeIN1pin, HIGH);
-    digitalWrite(hbridgeIN2pin, HIGH);
   }
+  MotorMove(ADAS.dir);
 }
 
 
@@ -291,8 +281,6 @@ void writeData() {
      is still enabled to stop ADAS if the the SD
      write locks up.
   */
-
-  DetachInterrupts();
 
   ADASdatafile = open("ADASdata.txt", FILE_WRITE);
 
@@ -477,18 +465,54 @@ void DetachInterrupts() {
 }
 
 File open(char[] filename) {
+  /*
+    makes open consistent with the implementation in the SD library, where the default mode is FILE_READ
+  */
   return open(sdcard, filename, FILE_READ);
 }
 
 File open(char[] filename, byte mode) {
+  /*
+    Detaches interrupts while file is open to avoid corruption of file
+  */
+
+  // NOTE: motor overshoot can happen
   DetachInterrupts();
   return SD.open(filename, mode);
 }
 
 void close(File file) {
+  /*
+    reattaches interrupts after closing the file to avoid corruption of the file in question
+  */
   file.close();
   AttachInterrupts();
 }
+
+void MotorStop() {
+  MotorMove(0);
+}
+
+void MotorMove(int direction) {
+  /*
+    moves motor in a direction given by the direction flag
+    -1 = backwards
+    0 = stop
+    1 = forwards
+  */
+
+  if (direction == 1) { //forward
+    digitalWrite(hbridgeIN1pin, HIGH);
+    digitalWrite(hbridgeIN2pin, LOW);
+  } else if (direction == -1) { //reverse
+    digitalWrite(hbridgeIN1pin, LOW);
+    digitalWrite(hbridgeIN2pin, HIGH);
+  } else if (direction == 0) { // STOP
+    digitalWrite(hbridgeIN1pin, HIGH);
+    digitalWrite(hbridgeIN2pin, HIGH);
+  }
+}
+
 
 void setup() {
   BLESerial.setName("ADAS");
