@@ -163,7 +163,6 @@ void ADASzero() {
   digitalWrite(hbridgeIN2pin, HIGH);
 }
 
-
 void ADASmove() {
   /*
     Actually moves the ADAS motor according to ADAS.desiredpos and ADAS.pulsect.
@@ -295,7 +294,7 @@ void writeData() {
 
   DetachInterrupts();
 
-  ADASdatafile = SD.open("ADASdata.txt", FILE_WRITE);
+  ADASdatafile = open("ADASdata.txt", FILE_WRITE);
 
   if (ADASdatafile) {
     for (int j = 0; j < 10; j++) { //10 blocks of
@@ -313,7 +312,6 @@ void writeData() {
       ADASdatafile.print(ADAS.dir);
       ADASdatafile.print("\n");
     }
-    ADASdatafile.close();
   } else {
     // if the file didn't open, print an error:
     // NOTE: this doesnt do much in the air
@@ -321,8 +319,7 @@ void writeData() {
     ADAS.error = -9;
     ADASbeep(-9);
   }
-
-  AttachInterrupts(); // attach interupts again
+  close(ADASdatafile);
 }
 
 
@@ -443,20 +440,20 @@ int ADASselftest() {
   char ADASteststring[11] = "TESTING123";
   File ADAStestfile;
 
-  DetachInterrupts();
-  ADAStestfile = SD.open("ADAStestfile.txt", FILE_WRITE);
+  ADAStestfile = open("ADAStestfile.txt", FILE_WRITE);
   ADAStestfile.println(ADASteststring);
-  ADASdatafile.close();
-  ADAStestfile = SD.open("ADAStestfile.txt");
+  close(ADAStestfile);
+
+  ADAStestfile = open("ADAStestfile.txt", FILE_READ);
   char readtestbuf[11];
   for (int i = 0; i < 11 && ADASdatafile.available(); i++) {
     if (ADAStestfile.read() != ADASteststring[i]) {
       ADAS.error = -9;  //File read/write error.
+      close(ADAStestfile); // close even if there is an error
       return ADAS.error;
     }
   }
-  ADAStestfile.close();
-  AttachInterrupts();
+  close(ADAStestfile);
 
   ADAS.error = 0;
   return ADAS.error; // All tests passed.
@@ -476,6 +473,21 @@ void DetachInterrupts() {
   */
   detachInterrupt(encoderpinA);
   detachInterrupt(limitswitchpin);
+  // don't detach watchdog to catch failure in sd card writing
+}
+
+File open(char[] filename) {
+  return open(sdcard, filename, FILE_READ);
+}
+
+File open(char[] filename, byte mode) {
+  DetachInterrupts();
+  return SD.open(filename, mode);
+}
+
+void close(File file) {
+  file.close();
+  AttachInterrupts();
 }
 
 void setup() {
@@ -496,7 +508,7 @@ void setup() {
   while (!SD.begin(sdpin)) { //Stop everything if we cant see the SD card!
     Serial.println("Card failed or not present.");
     ADASbeep(-1);
-    delay(1000);
+    // delay(1000); already blocked for at least 1 second by the beeping
   }
 
   Serial.println("Card OK");
