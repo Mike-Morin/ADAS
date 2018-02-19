@@ -83,17 +83,14 @@ void ADASbeep(int code) {
     // if there is a critical error there is a 2 second long beep before the code
     digitalWrite(beeperpin, HIGH);
     delay(2000);
-    digitalWrite(beeperpin, LOW);
-    delay(1000);
   } else {
     // any non negative code is a information code
     // there is a 400ms long beep before these codes
     digitalWrite(beeperpin, HIGH);
     delay(400);
-    digitalWrite(beeperpin, LOW);
-    delay(1000);
   }
-
+  digitalWrite(beeperpin, LOW);
+  delay(1000);
   // beep out the code 
   for (int i = 0; i < abs(code); i++) {
     digitalWrite(beeperpin, HIGH);
@@ -187,13 +184,10 @@ void ADASmove() {
   if (ADAS.dir == 1) { //forward fast
     digitalWrite(hbridgeIN1pin, HIGH);
     digitalWrite(hbridgeIN2pin, LOW);
-  }
-  else if (ADAS.dir == -1) { //reverse fast
+  } else if (ADAS.dir == -1) { //reverse fast
     digitalWrite(hbridgeIN1pin, LOW);
     digitalWrite(hbridgeIN2pin, HIGH);
-  }
-
-  else if (ADAS.dir == 0) { // STOP
+  } else if (ADAS.dir == 0) { // STOP
     digitalWrite(hbridgeIN1pin, HIGH);
     digitalWrite(hbridgeIN2pin, HIGH);
   }
@@ -201,9 +195,11 @@ void ADASmove() {
 
 
 void ADASupdate() {
-  /* Moves ADAS according to ADAS.desiredpos. Incorporates hysteresis via ADAS_ERROR
-     so the motor doesn't overshoot its target position and go into violent
-     oscillations.*/
+  /* 
+    Moves ADAS according to ADAS.desiredpos. Incorporates hysteresis via ADAS_ERROR
+    so the motor doesn't overshoot its target position and go into violent
+    oscillations.
+  */
 
   ADASmove(); //ADAS won't move unless ADASmove() is called here.
 
@@ -235,9 +231,10 @@ void ADASupdate() {
 
 
 void isLaunch() {
-  /* Launch detection code. If the total acceleration on the system
-     is above LAUNCH_THRESHOLD_ACC for a continuous LAUNCH_THRESHOLD_TIME,
-     the ADAS.launched flag is set.
+  /* 
+    Launch detection code. If the total acceleration on the system
+    is above LAUNCH_THRESHOLD_ACC for a continuous LAUNCH_THRESHOLD_TIME,
+    the ADAS.launched flag is set.
   */
 
   boolean nolaunch = false;
@@ -258,9 +255,10 @@ void isLaunch() {
 
 
 void getData() {
-  /* Polls all the sensors and puts the data in the ADASdatabuf.
-     The acclerometer gets polled 10 times for every altimeter
-     reading because the altimeter is very slow (fix!?).
+  /* 
+    Polls all the sensors and puts the data in the ADASdatabuf.
+    The acclerometer gets polled 10 times for every altimeter
+    reading because the altimeter is very slow (fix!?).
   */
   
   for (int i = 0; i < 10; i++) { //The acclerometer is polled 10 times.
@@ -280,7 +278,9 @@ void getData() {
 
 
 void writeData() {
-  /* Writes all the data */
+  /* 
+    Writes all the data
+  */
   
   // TODO: this could probably be simplified and/or be made faster by preformatting the string that is pushed to the sd card
   ADASdatafile = SD.open("ADASdata.txt", FILE_WRITE);
@@ -312,7 +312,9 @@ void writeData() {
 
 
 void ADASlaunchtest() {
-  /* Test launch code for pre-flight-model testing */
+  /*
+    Test launch code for pre-flight-model testing 
+  */
   
   static unsigned int curmillis = 0;
   if (ADAS.launched) {
@@ -342,11 +344,12 @@ void ADASlaunchtest() {
 
 
 int ADASselftest() {
-  /*  Checks the fins for proper behavior and
-      verifies that h-bridge and motor
-      connections are correct. Also does an
-      SD card write and read test. Returns 0 if
-      everything is OK. A negative if not so.
+  /*
+    Checks the fins for proper behavior and
+    verifies that h-bridge and motor
+    connections are correct. Also does an
+    SD card write and read test. Returns 0 if
+    everything is OK. A negative if not so.
   */
   static int lastpulsect = ADAS.pulsect;
 
@@ -422,20 +425,18 @@ int ADASselftest() {
   char ADASteststring[11] = "TESTING123";
   File ADAStestfile;
   ADAStestfile = SD.open("ADAStestfile.txt", FILE_WRITE);
-  ADAStestfile.println("ADASteststring");
+  ADAStestfile.println(ADASteststring);
   ADASdatafile.close();
+
   ADAStestfile = SD.open("ADAStestfile.txt");
   char readtestbuf[11];
   for (int i = 0; i < 11 && ADASdatafile.available(); i++) {
-    readtestbuf[i] = ADAStestfile.read();
-  }
-  ADAStestfile.close();
-  for (int i = 0; i < 11; i++) {
-    if (readtestbuf[i] != ADASteststring[i]) {
+    if (ADAStestfile.read() != ADASteststring[i]) {
       ADAS.error = -9;  //File read/write error.
       return ADAS.error;
     }
   }
+  ADAStestfile.close();
   ADAS.error = 0;
   return ADAS.error; // All tests passed.
 }
@@ -492,7 +493,9 @@ void loop() {
   BLESerial.println("Hello, this is ADAS.");
   getData();
   writeData();
-  isLaunch();
+  if (!ADAS.launched) { // why check if the rocket has lauched after it has launched?
+      isLaunch();
+  }
   ADASupdate();
   ADASlaunchtest();
   Serial.println(ADAS.launched);
