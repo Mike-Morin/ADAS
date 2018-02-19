@@ -101,18 +101,21 @@ void ADASbeep(int code) {
 }
 
 void ADASretract() {
-  /* Triggered manually by the external button */
+  /*
+    Triggered manually by the external button
+  */
   // QUERY: No checking if the thing is finished retracting?
   digitalWrite(hbridgeIN1pin, LOW);
   digitalWrite(hbridgeIN2pin, HIGH);
 }
 
 void ADASpulse() {
-  /* Whenever a pulse is detected, an interrupt is triggered and this function executes.
-     The direction is set by the ADASupdate() function. Using both encoders would allow
-     us to measure ADAS direction directly, but the pulses from both encoders must be
-     compared. This is so slow that it was introducing weirdness. We could try again
-     using port manipulation but the indirect approach here seems reliable.
+  /* 
+    Whenever a pulse is detected, an interrupt is triggered and this function executes.
+    The direction is set by the ADASupdate() function. Using both encoders would allow
+    us to measure ADAS direction directly, but the pulses from both encoders must be
+    compared. This is so slow that it was introducing weirdness. We could try again
+    using port manipulation but the indirect approach here seems reliable.
   */
 
 
@@ -150,8 +153,10 @@ void ADASclose() {
 }
 
 void ADASzero() {
-  //  Executed upon interrupt from the optical limit switch.
-
+  /*
+    Stops the motor when the limit switch is engaged
+    called on interupt from optical limit switch
+  */
   Serial.println("Limit Switch Triggered");
   ADAS.pulsect = 0;
   digitalWrite(hbridgeIN1pin, HIGH);
@@ -160,7 +165,9 @@ void ADASzero() {
 
 
 void ADASmove() {
-  /* Actually moves the ADAS motor according to ADAS.desiredpos and ADAS.pulsect.*/
+  /* 
+    Actually moves the ADAS motor according to ADAS.desiredpos and ADAS.pulsect.
+  */
   
   static int pwmfreq = 0;
   if (ADAS.emergencystop) {
@@ -218,8 +225,7 @@ void ADASupdate() {
       ADAS.slow = true;
       return;
     }
-  }
-  else if (ADAS.pulsect >= (ADAS.desiredpos + ADAS_ERROR)) { // Need to go reverse to achieve target pos.
+  } else if (ADAS.pulsect >= (ADAS.desiredpos + ADAS_ERROR)) { // Need to go reverse to achieve target pos.
     ADAS.dir = -1;
     ADAS.lastdir = ADAS.dir;
     if ( ADAS.pulsect <= (ADAS.desiredpos + ADAS_SLOW_THRESH)) { //slow when approaching target
@@ -247,6 +253,7 @@ void isLaunch() {
         nolaunch = true;
       }
     }
+
     if (!nolaunch) {
       ADAS.launched = true;
     }
@@ -279,7 +286,7 @@ void getData() {
 
 void writeData() {
   /* 
-    Writes all the data
+    Writes all the sensor data to SD card
   */
   
   // TODO: this could probably be simplified and/or be made faster by preformatting the string that is pushed to the sd card
@@ -313,7 +320,7 @@ void writeData() {
 
 void ADASlaunchtest() {
   /*
-    Test launch code for pre-flight-model testing 
+    Test launch code for pre-flight-model testing
   */
   
   static unsigned int curmillis = 0;
