@@ -24,7 +24,7 @@ Meaning: Polarity Swapped. Again?
 
 ### Error: 6
 
-Meaning: Inconsistant Motor movement, it had moved and now it hasnt
+Meaning: Inconsistent Motor movement. Forward worked but not reverse.
 
 ### Error: 7
 

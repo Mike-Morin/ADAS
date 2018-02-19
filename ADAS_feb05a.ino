@@ -10,46 +10,47 @@
 //#include <CurieBLE.h>
 
 #define ADAS_ERROR 2 //Allowed error in ADAS motion due to overshoot. (encoder pulses) 
-#define ADAS_SLOW_THRESH 100 // Number of pulses away from target at which ADAS slows down. (encoder pulses)
-#define ADAS_JERK_TIME 200 // Amount of time ADAS slowing is to be applied before jerk condition is cleared. (milliseconds)
+#define ADAS_SLOW_THRESH 10 // Number of pulses away from target at which ADAS slows down. (encoder pulses)
+#define ADAS_MAX_JERK_TIME 500 // Amount of time ADAS slowing is to be applied before jerk condition is cleared. (milliseconds)
 #define ADAS_MAX_DEPLOY 220 // Max number of ADAS pulses--this is where the fins disengage.(encoder pulses)
-#define ADAS_PWM_STEP_PERIOD 200 // Number of milliseconds until PWM frequency increases for motor soft start. (milliseconds)
-
+#define ADAS_PWM_FREQ 75 // PWM frequency for slow condition. (#/255)
 #define LAUNCH_THRESHOLD_TIME 200 //(ms)
 #define LAUNCH_THRESHOLD_ACC 4 //(g)
 
 #define WDUS 1000000 //Number of microseconds until watchdog times out and e-stops ADAS. (1000000us = 1s)
 
 /* Pin defs */
-const byte hbridgeENpin = 4;
 const byte hbridgeIN1pin = 2; //h-bridge board pins 2 & 3
+const byte beeperpin = 3;
+const byte limitswitchpin = 4;
+const byte hbridgeENpin = 5;
 const byte hbridgeIN2pin = 6;//h-bridge board pins  1 & 4
 const byte encoderpinA = 7;
-const byte limitswitchpin = 5;
-const byte beeperpin = 3;
+const int  sdpin = 10; // Also known as SS.
+
 
 /* Pin defs in the SPI library
- * SS	-- pin 10
- * MOSI -- pin 11
- * MISO -- pin 12
- * SCK  -- pin 13
- */
+   SS	-- pin 10
+   MOSI -- pin 11
+   MISO -- pin 12
+   SCK  -- pin 13
+*/
 
-const int SD_PIN = 4;
 
 
 /* ADAS variables */
 typedef struct {
   boolean launched = false;            //Set to true when accelerometer detects launch condition.
   volatile int dir = 0;                //Current ADAS direction.
-  int lastdir = 0;                     //Previous ADAS direction.
+  int lastdir = -3;                     //Previous ADAS direction.
   volatile int pulsect = 0;            //Current pulse count. Set by interrupt in ADASpulse();
   int desiredpos = 0;                 // Set this and run ADASupdate() to move ADAS to that position. (pulses)
   volatile boolean atlimit = false;    //True when limit switch is hit. Updated by ADASupdate() and ADAShitlimit().
-  unsigned int dtlaststatechange = 0; // Time change since last state change. (ms)
+  unsigned int jerktime = 0; // Time change since last state change. (ms)
   boolean slow = false;               // ADAS is in slow mode.
   int error = -99;
   boolean emergencystop = false;
+  boolean jerk = true;
 } ADASstate;
 
 ADASstate ADAS;
@@ -64,12 +65,12 @@ File ADASdatafile;
 
 void ADASWDtimeout() {
   /* Executed by main watchdog timer if it times out */
-  
+
   ADAS.emergencystop = true; // emergency stop
   digitalWrite(hbridgeIN1pin, HIGH); // stop the motor completely
   digitalWrite(hbridgeIN2pin, HIGH);
   ADAS.desiredpos = ADAS.pulsect;
-  ADASbeep(-99); // beep 
+  ADASbeep(-99); // beep
 }
 
 void ADASbeep(int code) {
@@ -97,26 +98,17 @@ void ADASbeep(int code) {
   }
   digitalWrite(beeperpin, LOW);
   delay(1000);
-  // beep out the code 
+  // beep out the code
   for (int i = 0; i < abs(code); i++) {
     digitalWrite(beeperpin, HIGH);
-    delay(1000);
+    delay(200);
     digitalWrite(beeperpin, LOW);
     delay(200);
   }
 }
 
-void ADASretract() {
-  /*
-    Triggered manually by the external button
-  */
-  // QUERY: No checking if the thing is finished retracting?
-  digitalWrite(hbridgeIN1pin, LOW);
-  digitalWrite(hbridgeIN2pin, HIGH);
-}
-
 void ADASpulse() {
-  /* 
+  /*
     Whenever a pulse is detected, an interrupt is triggered and this function executes.
     The direction is set by the ADASupdate() function. Using both encoders would allow
     us to measure ADAS direction directly, but the pulses from both encoders must be
@@ -125,9 +117,9 @@ void ADASpulse() {
   */
 
 
-  // Query: Why does this not result in an error being beeped?
   if (ADAS.emergencystop) { //This is a fatal condition. ADAS must be reset to clear.
     ADAS.desiredpos = ADAS.pulsect;
+    ADASbeep(-99);
     return;
   }
   if (ADAS.dir == 1) {
@@ -135,24 +127,26 @@ void ADASpulse() {
   } else if (ADAS.dir == -1)  {
     ADAS.pulsect--;
   }
+
   if ((ADAS.pulsect >= (ADAS.desiredpos - ADAS_ERROR)) && (ADAS.pulsect <= (ADAS.desiredpos + ADAS_ERROR))) {
     ADAS.dir = 0;
     digitalWrite(hbridgeIN1pin, HIGH);
     digitalWrite(hbridgeIN2pin, HIGH);
-    ADAS.slow = false;
+    digitalWrite(hbridgeENpin, LOW);
+
   }
   if (ADAS.pulsect >= ADAS_MAX_DEPLOY) {
     ADAS.dir = 0;
     ADAS.desiredpos = ADAS_MAX_DEPLOY;
     digitalWrite(hbridgeIN1pin, HIGH);
     digitalWrite(hbridgeIN2pin, HIGH);
-    ADAS.slow = false;
+    digitalWrite(hbridgeENpin, LOW);
   }
 }
 
 void ADASclose() {
   /* Closes ADAS all the way. Use for retracting fins after apogee.*/
-  
+
   if (!digitalRead(limitswitchpin)) { //ADAS is open
     ADAS.desiredpos = 0 - ADAS_MAX_DEPLOY; //Close ADAS for sure. Relies on the limit switch working.
   }
@@ -171,11 +165,10 @@ void ADASzero() {
 
 
 void ADASmove() {
-  /* 
+  /*
     Actually moves the ADAS motor according to ADAS.desiredpos and ADAS.pulsect.
   */
-  
-  static int pwmfreq = 0;
+  static unsigned int lastmillis = 0;
   if (ADAS.emergencystop) {
     digitalWrite(hbridgeIN1pin, HIGH);
     digitalWrite(hbridgeIN2pin, HIGH);
@@ -183,24 +176,18 @@ void ADASmove() {
     return;
   }
   if (ADAS.slow) {
-    analogWrite(hbridgeENpin, pwmfreq);
-    if (millis() % ADAS_PWM_STEP_PERIOD == 0) {
-      pwmfreq++;
-    } else {
-      pwmfreq = 0;
-    }
-    if (pwmfreq == 255) {
-      ADAS.slow = false;
-      pwmfreq = 0;
-    }
+    analogWrite(hbridgeENpin, ADAS_PWM_FREQ);
+  } else {
+    digitalWrite(hbridgeENpin, HIGH);
   }
-  if (ADAS.dir == 1) { //forward fast
+  if (ADAS.dir == 1) { //forward
     digitalWrite(hbridgeIN1pin, HIGH);
     digitalWrite(hbridgeIN2pin, LOW);
-  } else if (ADAS.dir == -1) { //reverse fast
+  } else if (ADAS.dir == -1) { //reverse
     digitalWrite(hbridgeIN1pin, LOW);
     digitalWrite(hbridgeIN2pin, HIGH);
   } else if (ADAS.dir == 0) { // STOP
+    ADAS.slow = false;
     digitalWrite(hbridgeIN1pin, HIGH);
     digitalWrite(hbridgeIN2pin, HIGH);
   }
@@ -208,42 +195,45 @@ void ADASmove() {
 
 
 void ADASupdate() {
-  /* 
+  /*
     Moves ADAS according to ADAS.desiredpos. Incorporates hysteresis via ADAS_ERROR
     so the motor doesn't overshoot its target position and go into violent
     oscillations.
   */
 
+  static unsigned int lastjerk = 0;
+
   ADASmove(); //ADAS won't move unless ADASmove() is called here.
 
   if (ADAS.lastdir != ADAS.dir) { //Prevents sudden changes by setting slow flag.
-    ADAS.dtlaststatechange =  millis() - ADAS.dtlaststatechange;
-    if (ADAS.dtlaststatechange < ADAS_JERK_TIME) {
-      ADAS.slow = true;
-    } else {
-      ADAS.slow = false;
-    }
+    ADAS.jerk = true;
+    ADAS.slow = true;
+    lastjerk =  millis();
   }
+
+  if ((millis() - lastjerk) >= ADAS_MAX_JERK_TIME && ADAS.jerk == true) {
+    ADAS.slow = false;
+    ADAS.jerk = false;
+  }
+
   if (ADAS.pulsect <= (ADAS.desiredpos - ADAS_ERROR)) { // Need to go forward to achieve target pos.
     ADAS.dir = 1;
     ADAS.lastdir = ADAS.dir;
     if (ADAS.pulsect >= (ADAS.desiredpos - ADAS_SLOW_THRESH)) { //slow when approaching target
       ADAS.slow = true;
-      return;
     }
   } else if (ADAS.pulsect >= (ADAS.desiredpos + ADAS_ERROR)) { // Need to go reverse to achieve target pos.
     ADAS.dir = -1;
     ADAS.lastdir = ADAS.dir;
     if ( ADAS.pulsect <= (ADAS.desiredpos + ADAS_SLOW_THRESH)) { //slow when approaching target
       ADAS.slow = true;
-      return;
     }
   }
 }
 
 
 void isLaunch() {
-  /* 
+  /*
     Launch detection code. If the total acceleration on the system
     is above LAUNCH_THRESHOLD_ACC for a continuous LAUNCH_THRESHOLD_TIME,
     the ADAS.launched flag is set.
@@ -268,12 +258,12 @@ void isLaunch() {
 
 
 void getData() {
-  /* 
+  /*
     Polls all the sensors and puts the data in the ADASdatabuf.
     The acclerometer gets polled 10 times for every altimeter
     reading because the altimeter is very slow (fix!?).
   */
-  
+
   for (int i = 0; i < 10; i++) { //The acclerometer is polled 10 times.
     ADASdatabuf[0][i] = micros();
 
@@ -291,12 +281,13 @@ void getData() {
 
 
 void writeData() {
-  /* 
+  /*
     Writes all the sensor data to SD card
   */
-  
+
   // TODO: this could probably be simplified and/or be made faster by preformatting the string that is pushed to the sd card
   ADASdatafile = SD.open("ADASdata.txt", FILE_WRITE);
+
   if (ADASdatafile) {
     for (int j = 0; j < 10; j++) { //10 blocks of
       for (int i = 0; i < 9; i++) { //9 sensor outputs
@@ -326,33 +317,35 @@ void writeData() {
 
 void ADASlaunchtest() {
   /*
-    Test launch code for pre-flight-model testing
+    Test launch code for model testing
   */
-  
+
   static unsigned int curmillis = 0;
-  if (ADAS.launched) {
-    if (curmillis == 0) {
-      curmillis = millis();
-    }
-    if (curmillis >= 4000 && curmillis < 5000) {
-      ADAS.desiredpos = 44;
-    }
-    if (curmillis >= 5000 && curmillis < 6000) {
-      ADAS.desiredpos = 88;
-    }
-    if (curmillis >= 6000 && curmillis < 7000) {
-      ADAS.desiredpos = 132;
-    }
-    if (curmillis >= 7000 && curmillis < 8000) {
-      ADAS.desiredpos = 176;
-    }
-    if (curmillis >= 8000 && curmillis < 9000) {
-      ADAS.desiredpos = 200;
-    }
-    if (curmillis >= 20000) {
-      ADASclose();
-    }
+  // if (ADAS.launched) {
+  if (curmillis == 0) {
+    curmillis = millis();
   }
+  if (millis() - curmillis >= 1000 && millis() - curmillis < 2000) {
+    ADAS.desiredpos = 0;
+  }
+  if (millis() - curmillis >= 2000 && millis() - curmillis < 3000) {
+    ADAS.desiredpos = 50;
+  }
+  if (millis() - curmillis >= 3000 && millis() - curmillis < 4000) {
+    ADAS.desiredpos = 75;
+  }
+  if (millis() - curmillis >= 5000 && millis() - curmillis < 6000) {
+    ADAS.desiredpos = 100;
+  }
+  if (millis() - curmillis >= 7000 && millis() - curmillis < 8000) {
+    ADAS.desiredpos = 200;
+    curmillis = millis(); //remove this for actual launches! causes repeat.
+
+  }
+  if (millis() - curmillis >= 60000) {
+    //ADASclose();
+  }
+  //}
 }
 
 
@@ -366,7 +359,8 @@ int ADASselftest() {
   */
   static int lastpulsect = ADAS.pulsect;
 
-  for ( int i = 0; i < 100 && lastpulsect == ADAS.pulsect; i++) {
+  for ( int i = 0; i < 1000 && lastpulsect == ADAS.pulsect; i++) {
+    digitalWrite(hbridgeENpin, HIGH);
     digitalWrite(hbridgeIN1pin, HIGH); //test stop condition 1
     digitalWrite(hbridgeIN2pin, HIGH);
     digitalWrite(hbridgeIN1pin, LOW); //test stop condition 2
@@ -394,7 +388,7 @@ int ADASselftest() {
   }
 
   ADAS.desiredpos = ADAS.pulsect - ADAS_ERROR - 2; //test reverse condition.
-  for (int i = 0; i < 100; i++) {
+  for (int i = 0; i < 1000; i++) {
     ADASupdate();
     delay(1);
   }
@@ -403,19 +397,19 @@ int ADASselftest() {
     ADAS.desiredpos = 0;
     return ADAS.error;
   }
-  if (ADAS.pulsect == lastpulsect) { //Motor not moving this time. Inconsistent motor movement.
+  if (ADAS.pulsect == lastpulsect) { //Motor not moving this time. Reverse is not working.
     ADAS.error = -6;
     ADAS.desiredpos = 0;
     return ADAS.error;
   }
 
   ADAS.desiredpos = ADAS_MAX_DEPLOY; //test full range
-  for (int i = 0; i < 200 && lastpulsect == ADAS.pulsect; i++) {
+  for (int i = 0; i < 2000 && lastpulsect == ADAS.pulsect; i++) {
     ADASupdate();
     delay(10);
   }
   ADAS.desiredpos = 50;
-  for (int i = 0; i < 200 && lastpulsect == ADAS.pulsect; i++) {
+  for (int i = 0; i < 2000 && lastpulsect == ADAS.pulsect; i++) {
     ADASupdate();
     delay(10);
   }
@@ -425,7 +419,7 @@ int ADASselftest() {
   }
 
   ADAS.desiredpos = 0 - ADAS_ERROR - 1;
-  for (int i = 0; i < 100 && lastpulsect == ADAS.pulsect; i++) {
+  for (int i = 0; i < 1000 && lastpulsect == ADAS.pulsect; i++) {
     ADASupdate();
     delay(10);
   }
@@ -469,17 +463,19 @@ void setup() {
   CurieIMU.setGyroRate(3200);
   CurieIMU.setAccelerometerRate(1600);
 
-  while (!SD.begin(SD_PIN)) { //Stop everything if we cant see the SD card!
+  while (!SD.begin(sdpin)) { //Stop everything if we cant see the SD card!
     Serial.println("Card failed or not present.");
     ADASbeep(-1);
+    delay(1000);
   }
 
   Serial.println("Card OK");
   ADASbeep(1);
 
-  /* ADAS control stuff */
-  pinMode(9, INPUT_PULLUP); // QUERY: What is this for?
+  delay(500);
 
+
+  /* ADAS control stuff */
   pinMode(hbridgeIN1pin, OUTPUT); //hbridge IN1
   pinMode(hbridgeIN2pin, OUTPUT); //hbridge IN2
   pinMode(hbridgeENpin, OUTPUT); //hbridge EN pin for pwm
@@ -488,14 +484,12 @@ void setup() {
 
   attachInterrupt(digitalPinToInterrupt(encoderpinA), ADASpulse, RISING); //Catch interrupts from the encoder.
   attachInterrupt(digitalPinToInterrupt(limitswitchpin), ADASzero, FALLING); // catch when the limit switch is disengaged
-  attachInterrupt(digitalPinToInterrupt(9), ADASretract, FALLING); // Pin 9 again?
 
-  delay(100); // QUERY: why wait 100 ms?
 
   /* Run self-test until pass. */
   while (ADAS.error != 0) {
     ADASbeep(ADASselftest());
-  }
+    }
 
   CurieTimerOne.start(WDUS, &ADASWDtimeout); //Starts watchdog timer.
 }
@@ -507,11 +501,13 @@ void loop() {
   getData();
   writeData();
   if (!ADAS.launched) { // why check if the rocket has lauched after it has launched?
-      isLaunch();
+    isLaunch();
   }
   ADASupdate();
   ADASlaunchtest();
   Serial.println(ADAS.launched);
   Serial.println(ADAS.error);
+
+
 }
 
