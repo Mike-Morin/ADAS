@@ -470,6 +470,10 @@ void setup() {
 
 
 void loop() {
+    GetData();
+    if (ADASDataBuffer.length == 10) {
+        WriteData();
+    }
     if (!ADAS.launched) {
         /*
             Things to repeat prelaunch
