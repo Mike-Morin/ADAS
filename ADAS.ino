@@ -457,14 +457,14 @@ void loop() {
     CurrieTimerOne.restart(WATCHDOG_LIMIT);
     getData();
 
-    if (ADASDataBuffer.length() == 10) {
+    if (ADASDataBuffer.length == 10) {
         writeData();
     }
 
     if (!ADAS.launched) {
         isLaunch();
     }
-    
+
 
     Serial.println(millis()-start);
 }
