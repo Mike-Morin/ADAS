@@ -1,4 +1,4 @@
-#include "BLESerial.h"
+//#include "BLESerial/BLESerial.h"
 
 #include "MS5607/IntersemaBaro.h"
 
@@ -30,7 +30,7 @@ const int  sdpin = 10; // Also known as SS.
 
 
 /* Pin defs in the SPI library
-   SS	-- pin 10
+   SS -- pin 10
    MOSI -- pin 11
    MISO -- pin 12
    SCK  -- pin 13
@@ -120,9 +120,6 @@ void ADASpulse() {
     ADASbeep(-99); // beep like nothing else
     return;
   }
-
-  if (ADAS.pulse_count < ADAS.)
-
 
   if (ADAS.inFatalError) { //This is a fatal condition. ADAS must be reset to clear.
     ADAS.desiredpos = ADAS.pulse_count;
@@ -472,14 +469,14 @@ void DetachInterrupts() {
   // don't detach watchdog to catch failure in sd card writing
 }
 
-File open(char[] filename) {
+File open(char filename[]) {
   /*
     makes open consistent with the implementation in the SD library, where the default mode is FILE_READ
   */
-  return open(sdcard, filename, FILE_READ);
+  return open(filename, FILE_READ);
 }
 
-File open(char[] filename, byte mode) {
+File open(char filename[], byte mode) {
   /*
     Detaches interrupts while file is open to avoid corruption of file
   */
@@ -525,8 +522,8 @@ void MotorMove(int direction) {
 
 
 void setup() {
-  BLESerial.setName("ADAS");
-  BLESerial.begin();
+//  BLESerial.setName("ADAS");
+//  BLESerial.begin();
 
   Serial.begin(9600);
 
@@ -571,7 +568,7 @@ void setup() {
 
 void loop() {
   CurieTimerOne.restart(WDUS); //Restarts watchdog timer.
-  BLESerial.println("Hello, this is ADAS.");
+  //BLESerial.println("Hello, this is ADAS.");
   getData();
   writeData();
   if (!ADAS.launched) { // why check if the rocket has lauched after it has launched?

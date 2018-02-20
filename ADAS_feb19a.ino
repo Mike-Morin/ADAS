@@ -4,13 +4,12 @@
 */
 
 #include "MS5607/IntersemaBaro.h"
-#include <CurrieTimerOne.h>
+#include <CurieTimerOne.h>
 #include <SPI.h>
 #include <SD.h>
 #include <Wire.h>
 #include <CurieIMU.h>
 
-const int ADAS_ERROR = 2; // (steps) number of steps that ADAS is allowed to over/undershoot
 const int ADAS_MAX_POSITION = 220; // (steps) max number of steps that adas can be away from 0
 const int ADAS_NORMAL_PWM = 255; // (#/255) normal pwm
 const int ADAS_SLOW_PWM = 75; // (#/255) pwm of slow mode
@@ -50,25 +49,22 @@ typedef struct {
     bool descending = false; // for future use: why continue running adas when the rocket is falling?
     bool inError = false;
     bool slowmode = false;
-    bool allowed_to_move = true;
     bool enforce_target = true;
 
     volatile int target = 0;
     volatile int position = 0;
     volatile int error = 0;
     volatile int direction = 0;
-    unsigned long first_time_above_threshold = 0;
-
 } ADASstate;
 
 // data buffer struct, allows you to easily (and relatively painlessly) add more sensors and such
 typedef struct {
     int length;
-    unsigned long ts[10];
-    float accelerometer[10][3];
-    float gyroscope[10][3];
+    uint64_t ts[10];
+    float accelerometer[10][3]; // 3 axis
+    float gyroscope[10][3]; // 3 axis
     float temperature[10];
-    float altitude[10];
+    float altimeter[10];
     bool launched[10];
     int position[10];
     bool target[10];
@@ -76,7 +72,9 @@ typedef struct {
 } DataBuffer;
 
 ADASstate ADAS;
-DataBuffer ADASDataBuffer;
+DataBuffer DB;
+Intersema::BaroPressure_MS5607B MS5607alt(true);
+
 
 // interrupt driven functions
 void WatchdogTimeout() {
@@ -85,19 +83,19 @@ void WatchdogTimeout() {
     */
     ADAS.inError = true;
     ADAS.error = -99;
-    MotorStop();
+    SetMotorDirection(STOP);
     beep(ADAS.error);
 }
 
 void onLaunch() {
     if (!ADAS.launched) {
-        ADAS.launched = true
+        ADAS.launched = true;
         // remove launch interrupt
-        CurieIMU.detachInterrupt()
+        CurieIMU.detachInterrupt();
         CurieIMU.noInterrupts(CURIE_IMU_SHOCK);
         // add apogee interrupt
         CurieIMU.interrupts(CURIE_IMU_FREEFALL);
-        CurieIMU.attachInterupt(onApogee);
+        CurieIMU.attachInterrupt(onApogee);
     }
     
 
@@ -163,14 +161,14 @@ void SetMotorDirection(int direction) {
         sets the ADAS motor direction
     */
     if (direction == FORWARD) { //forward
-        digitalWrite(hbridgeIN1pin, HIGH);
-        digitalWrite(hbridgeIN2pin, LOW);
+        digitalWrite(hbridgeIN1_pin, HIGH);
+        digitalWrite(hbridgeIN2_pin, LOW);
     } else if (direction == REVERSE) { //reverse
-        digitalWrite(hbridgeIN1pin, LOW);
-        digitalWrite(hbridgeIN2pin, HIGH);
+        digitalWrite(hbridgeIN1_pin, LOW);
+        digitalWrite(hbridgeIN2_pin, HIGH);
     } else if (direction == STOP) { // STOP
-        digitalWrite(hbridgeIN1pin, HIGH);
-        digitalWrite(hbridgeIN2pin, HIGH);
+        digitalWrite(hbridgeIN1_pin, HIGH);
+        digitalWrite(hbridgeIN2_pin, HIGH);
     }
 }
 
@@ -178,17 +176,17 @@ void SetMotorSpeed(int speed) {
     /*
         Sets the adas motor speed to speed (#/255)
     */
-    analogWrite(speed);
+    analogWrite(hbridgeEN_pin, speed);
 }
 
-void AccelerationMagnitude(float vector[]) {
+float AccelerationMagnitude(float vector[]) {
     /*
         calculates the magnitude of the acceleration from an array of x, y and z
     */
     return AccelerationMagnitude(vector[0], vector[1], vector[2]);
 }
 
-void AccelerationMagnitude(float xAcc, float yAcc, float zAcc) {
+float AccelerationMagnitude(float xAcc, float yAcc, float zAcc) {
     /*
         gets the magnetude of the acceleration on the accelerometer
     */
@@ -199,28 +197,28 @@ void GetData() {
     /*
         Polls all sensors and puts them into the data buffer
     */
-    if (ADASDataBuffer.length == 10) {
-        ADASDataBuffer.length = 0; // reset adas data buffer once its been filled
+    if (DB.length == 10) {
+        DB.length = 0; // reset adas data buffer once its been filled
     }
 
-    ADASDataBuffer.altimeter[i] = MS5607alt.getHeightCentiMeters();
+    DB.altimeter[DB.length] = MS5607alt.getHeightCentiMeters();
     CurieIMU.readAccelerometerScaled(
-        ADASDataBuffer.accelerometer[ADASDataBuffer.length][0],
-        ADASDataBuffer.accelerometer[ADASDataBuffer.length][1],
-        ADASDataBuffer.accelerometer[ADASDataBuffer.length][2]
+        DB.accelerometer[DB.length][0],
+        DB.accelerometer[DB.length][1],
+        DB.accelerometer[DB.length][2]
     );
     CurieIMU.readGyroScaled(
-        ADASDataBuffer.gyroscope[ADASDataBuffer.length][0],
-        ADASDataBuffer.gyroscope[ADASDataBuffer.length][1],
-        ADASDataBuffer.gyroscope[ADASDataBuffer.length][2]
+        DB.gyroscope[DB.length][0],
+        DB.gyroscope[DB.length][1],
+        DB.gyroscope[DB.length][2]
     );
-    ADASDataBuffer.temperature[ADASDataBuffer.length] = (CurieIMU.readTemperature()/512.0)+23;
-    ADASDataBuffer.launched[ADASDataBuffer.length] = ADAS.launched;
-    ADASDataBuffer.position[ADASDataBuffer.length] = ADAS.position;
-    ADASDataBuffer.target[ADASDataBuffer.length] = ADAS.target;
-    ADASDataBuffer.direction[ADASDataBuffer.length-1] = ADAS.direction;
-    ADASDataBuffer.ts = millis(); // doubles as a way to tell how long each loop takes
-    ADASDataBuffer.length++;
+    DB.temperature[DB.length] = (CurieIMU.readTemperature()/512.0)+23;
+    DB.launched[DB.length] = ADAS.launched;
+    DB.position[DB.length] = ADAS.position;
+    DB.target[DB.length] = ADAS.target;
+    DB.direction[DB.length] = ADAS.direction;
+    DB.ts[DB.length] = millis(); // doubles as a way to tell how long each loop takes
+    DB.length++;
 
 }
 
@@ -228,52 +226,54 @@ void WriteData() {
     /*
         Writes all data to disk
         format : <time_since_start>,<accX>,<accY>,<accZ>,<gyroX>,<gyroY>,<gyroZ>,<temp>,<alt>,<launched>,<pos>,<target>,<direction>
+
+        TODO: do this all in one string format, might be faster...
     */
 
     File dataFile = open("ADASdata.txt", FILE_WRITE);
 
     if (dataFile) {
-        for (int i=0; i < ADASDataBuffer.length; i++) { // only write new data to the file
-            dataFile.print(ADASDataBuffer.ts[i]);
+        for (int i=0; i < DB.length; i++) { // only write new data to the file
+            dataFile.print(DB.ts[i]);
             dataFile.print("\t");
-            for (j=0; j < 3; j++) {
-                dataFile.print(ADASDataBuffer.accelerometer[i][j]);
+            for (int j=0; j < 3; j++) {
+                dataFile.print(DB.accelerometer[i][j]);
                 dataFile.print("\t");
             }
-            for (j=0; j < 3; j++) {
-                dataFile.print(ADASDataBuffer.gyroscope[i][j]);
+            for (int j=0; j < 3; j++) {
+                dataFile.print(DB.gyroscope[i][j]);
                 dataFile.print("\t");
             }
-            dataFile.print(ADASDataBuffer.temperature[i]);
+            dataFile.print(DB.temperature[i]);
             dataFile.print("\t");
-            dataFile.print(ADASDataBuffer.altimeter[i]);
+            dataFile.print(DB.altimeter[i]);
             dataFile.print("\t");
-            dataFile.print(ADASDataBuffer.launched[i]);
+            dataFile.print(DB.launched[i]);
             dataFile.print("\t");
-            dataFile.print(ADASDataBuffer.position[i]);
+            dataFile.print(DB.position[i]);
             dataFile.print("\t");
-            datafile.print(ADASDataBuffer.target[i]);
-            datafile.print("\t");
-            datafile.println(ADASDataBuffer.direction[i]);
+            dataFile.print(DB.target[i]);
+            dataFile.print("\t");
+            dataFile.println(DB.direction[i]);
         }
     }
     close(dataFile);
 }
 
-void AttachInterupts() {
-    attachInterupt(digitalPinToInterrupt(encoderA_pin), onEncoderPulse, RISING);
-    attachInterupt(digitalPinToInterrupt(limitswitch_pin), onLimitReached, FALLING); // falling edge because when the limit swich is  normally closed
+void AttachInterrupts() {
+    attachInterrupt(digitalPinToInterrupt(encoderA_pin), onEncoderPulse, RISING);
+    attachInterrupt(digitalPinToInterrupt(limitswitch_pin), onLimitReached, FALLING); // falling edge because when the limit swich is  normally closed
     if (!ADAS.launched) {
         if (CurieIMU.getInterruptStatus(CURIE_IMU_SHOCK)) {
             onLaunch();
         } else {
-            CurieIMU.attachInterupt(CURIE_IMU_SHOCK);
+            CurieIMU.attachInterrupt(onLaunch);
         }
     } else if (ADAS.launched && !ADAS.descending) {
         if (CurieIMU.getInterruptStatus(CURIE_IMU_FREEFALL)) {
             onApogee();
         } else {
-            CurieIMU.attachInterupt(CURIE_IMU_FREEFALL);
+            CurieIMU.attachInterrupt(onApogee);
         }
     }
 }
@@ -297,7 +297,7 @@ int ADASSelfTest() {
     // test stop mode 1 (both pins high)
     digitalWrite(hbridgeIN1_pin, HIGH);
     digitalWrite(hbridgeIN2_pin, HIGH);
-    delay(500)
+    delay(500);
 
     if (pc != ADAS.position) {
         return -2; // stop mode 1 did not work as intended
@@ -305,7 +305,7 @@ int ADASSelfTest() {
     // test stop mode 2 (both pins low)
     digitalWrite(hbridgeIN1_pin, LOW);
     digitalWrite(hbridgeIN2_pin, LOW);
-    delay(500)
+    delay(500);
 
     if (pc != ADAS.position) {
         return -3; // stop mode 1 did not work as intended
@@ -313,7 +313,7 @@ int ADASSelfTest() {
     // check if motor can go forward
     // pc should not have changed yet
     SetMotorDirection(FORWARD);
-    delay(100)
+    delay(100);
 
     if (pc < ADAS.position) {
         return -4; // motor went reverse instead of forwards
@@ -385,7 +385,7 @@ int ADASSelfTest() {
     testfile.println(testString);
     close(testfile);
 
-    File testfile = open("testfile.txt", FILE_READ);
+    testfile = open("testfile.txt", FILE_READ);
     for (int i = 0; i < 15; i++) {
         if (testfile.read() != testString[i]) {
             return -15; // sd card error
@@ -404,7 +404,7 @@ File open(char filename[], byte mode) {
 
 void close(File file) {
     file.close();
-    AttachInterupts(); // reattach the interrupts 
+    AttachInterrupts(); // reattach the interrupts 
     onEncoderPulse(); // sorts everything out based on where the position is and where the target position is
 }
 
@@ -467,7 +467,7 @@ void setup() {
     pinMode(encoderA_pin, INPUT);
     pinMode(limitswitch_pin, INPUT);
 
-    AttachInterupts();
+    AttachInterrupts();
 
     int error = ADASSelfTest();
     Serial.print("Self Test Error: ");
@@ -476,16 +476,17 @@ void setup() {
         beep(error);
     }
 
-    CurrieTimerOne.start(WATCHDOG_LIMIT, &WatchdogTimeout);
+    CurieTimerOne.start(WATCHDOG_LIMIT, &WatchdogTimeout);
     CurieIMU.interrupts(CURIE_IMU_SHOCK);
-    CurieIMU.attachInterupt(onLaunch);
+    CurieIMU.attachInterrupt(onLaunch);
     // may need to stop interrupts on FIFO full and data ready
 }
 
 
 void loop() {
+    CurieTimerOne.restart(WATCHDOG_LIMIT);
     GetData();
-    if (ADASDataBuffer.length == 10) {
+    if (DB.length == 10) {
         WriteData();
     }
     if (!ADAS.launched) {
