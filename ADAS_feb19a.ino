@@ -150,7 +150,7 @@ void onLimitReached() {
     /*
         When minimum limit reached
     */
-
+    
     // zero the position
     ADAS.position = 0;
     // stop the motors
@@ -263,11 +263,25 @@ void WriteData() {
 void AttachInterupts() {
     attachInterupt(digitalPinToInterrupt(encoderA_pin), onEncoderPulse, RISING);
     attachInterupt(digitalPinToInterrupt(limitswitch_pin), onLimitReached, FALLING); // falling edge because when the limit swich is  normally closed
+    if (!ADAS.launched) {
+        if (CurieIMU.getInterruptStatus(CURIE_IMU_SHOCK)) {
+            onLaunch();
+        } else {
+            CurieIMU.attachInterupt(CURIE_IMU_SHOCK);
+        }
+    } else if (ADAS.launched && !ADAS.descending) {
+        if (CurieIMU.getInterruptStatus(CURIE_IMU_FREEFALL)) {
+            onApogee();
+        } else {
+            CurieIMU.attachInterupt(CURIE_IMU_FREEFALL);
+        }
+    }
 }
 
 void DetachInterrupts() {
     detachInterrupt(encoderA_pin);
     detachInterrupt(limitswitch_pin);
+    CurieIMU.detachInterrupt();
 }
 
 int ADASSelfTest() {
