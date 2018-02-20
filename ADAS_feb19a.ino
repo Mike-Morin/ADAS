@@ -1,3 +1,8 @@
+/*
+    Complete refactor of the ADAS_feb05a sketch to with less loops and more async.
+    Most hard work is done by interrupts and the rest is left to 
+*/
+
 #include "MS5607/IntersemaBaro.h"
 #include <CurrieTimerOne.h>
 #include <SPI.h>
@@ -10,8 +15,7 @@ const int ADAS_MAX_POSITION = 220; // (steps) max number of steps that adas can 
 const int ADAS_NORMAL_PWM = 255; // (#/255) normal pwm
 const int ADAS_SLOW_PWM = 75; // (#/255) pwm of slow mode
 const int CREEPUP_THRESHOLD = 10; // (steps) number of steps away from ADAS's target position where slow mode is engaged
-const int LAUNCH_THRESHOLD_TIME = 200; // (ms) 
-const int LANUCH_THRESHOLD_ACC = 4; // (G) amount of acceleration needed to trip the launch detection
+const int LAUNCH_THRESHOLD_ACC = 4; // (G) amount of acceleration needed to trip the launch detection
 
 const int WATCHDOG_LIMIT = 1000000;
 
@@ -39,10 +43,11 @@ const int FORWARD = 1;
 const int STOP = 0;
 const int REVERSE = -1;
 
+
+
 typedef struct {
     bool launched = false;
-    bool descending = false;
-    bool atLimit = false;
+    bool descending = false; // for future use: why continue running adas when the rocket is falling?
     bool inError = false;
     bool slowmode = false;
     bool allowed_to_move = true;
@@ -56,6 +61,7 @@ typedef struct {
 
 } ADASstate;
 
+// data buffer struct, allows you to easily (and relatively painlessly) add more sensors and such
 typedef struct {
     int length;
     unsigned long ts[10];
@@ -81,6 +87,28 @@ void WatchdogTimeout() {
     ADAS.error = -99;
     MotorStop();
     beep(ADAS.error);
+}
+
+void onLaunch() {
+    if (!ADAS.launched) {
+        ADAS.launched = true
+        // remove launch interrupt
+        CurieIMU.detachInterrupt()
+        CurieIMU.noInterrupts(CURIE_IMU_SHOCK);
+        // add apogee interrupt
+        CurieIMU.interrupts(CURIE_IMU_FREEFALL);
+        CurieIMU.attachInterupt(onApogee);
+    }
+    
+
+}
+
+void onApogee() {
+    if (!ADAS.descending) {
+        ADAS.descending = true;
+        ADAS.target = 0; // retract aerobreak for safe landings
+        SetMotorDirection(REVERSE);
+    }
 }
 
 void onEncoderPulse() {
@@ -153,44 +181,23 @@ void SetMotorSpeed(int speed) {
     analogWrite(speed);
 }
 
-void isLaunch() {
+void AccelerationMagnitude(float vector[]) {
     /*
-        Checks if the net acceleration on the rocket is above the threshold
-        if it is and it has not been before that time is recorded as the first 
-        time it is possible launch has happened, if it has been above the threshold before
-        it is checked if it has been long enough to call it a launch, if it has then it sets
-        the launch flag to true.
+        calculates the magnitude of the acceleration from an array of x, y and z
     */
-    if (netAcceleration(ADASDataBuffer.accelerometer[ADASDataBuffer.length-1]) > LANUCH_THRESHOLD_ACC) {
-        if (ADAS.first_time_above_threshold <= 0) {
-            ADAS.first_time_above_threshold = millis();
-        } else if (ADAS.first_time_above_threshold > 0){
-            if ((ADAS.first_time_above_threshold-millis()) > LAUNCH_THRESHOLD_TIME) {
-                ADAS.launched = true;
-            }
-        }
-    } else {
-        ADAS.first_time_above_threshold = 0; // reset if acceleration was a one time thing
-    }
+    return AccelerationMagnitude(vector[0], vector[1], vector[2]);
 }
 
-void netAcceleration(float vector[]) {
-    return netAcceleration(vector[0], vector[1], vector[2]);
-}
-
-void netAcceleration(float xAcc, float yAcc, float zAcc) {
+void AccelerationMagnitude(float xAcc, float yAcc, float zAcc) {
+    /*
+        gets the magnetude of the acceleration on the accelerometer
+    */
     return sqrt(pow(xAcc, 2)+pow(yAcc, 2)+pow(zAcc,2));
 }
 
 void GetData() {
     /*
         Polls all sensors and puts them into the data buffer
-        the accelerometer/gyros get polled 10 times for every one
-        time the altimeter sensor is polled because it doesnt work
-        fast enough (fix?!)
-
-        NOTE: Perhaps it would be better to run this every loop instead of 
-        10 times all at once and call the data writer once every 10 loops?
     */
     if (ADASDataBuffer.length == 10) {
         ADASDataBuffer.length = 0; // reset adas data buffer once its been filled
@@ -212,7 +219,7 @@ void GetData() {
     ADASDataBuffer.position[ADASDataBuffer.length] = ADAS.position;
     ADASDataBuffer.target[ADASDataBuffer.length] = ADAS.target;
     ADASDataBuffer.direction[ADASDataBuffer.length-1] = ADAS.direction;
-    ADASDataBuffer.ts = millis();
+    ADASDataBuffer.ts = millis(); // doubles as a way to tell how long each loop takes
     ADASDataBuffer.length++;
 
 }
@@ -226,8 +233,9 @@ void WriteData() {
     File dataFile = open("ADASdata.txt", FILE_WRITE);
 
     if (dataFile) {
-        for (int i=0; i < 10; i++) { // 10 sensors readings
-            dataFile.print(ADASDataBuffer.ts[i][j]);
+        for (int i=0; i < ADASDataBuffer.length; i++) { // only write new data to the file
+            dataFile.print(ADASDataBuffer.ts[i]);
+            dataFile.print("\t");
             for (j=0; j < 3; j++) {
                 dataFile.print(ADASDataBuffer.accelerometer[i][j]);
                 dataFile.print("\t");
@@ -374,15 +382,15 @@ int ADASSelfTest() {
 }
 
 File open(char filename[], byte mode) {
-    SetMotorSpeed(STOP);
-    DetachInterrupts();
-    SetMotorSpeed(STOP);
-    return SD.open(filename, mode);
+    SetMotorSpeed(STOP); // Stop motors
+    DetachInterrupts(); // stop interupts
+    SetMotorSpeed(STOP); // Make sure no fuckery happend while waiting for interrupts to detach or something
+    return SD.open(filename, mode); // open file for reading
 }
 
 void close(File file) {
     file.close();
-    AttachInterupts();
+    AttachInterupts(); // reattach the interrupts 
     onEncoderPulse(); // sorts everything out based on where the position is and where the target position is
 }
 
@@ -429,6 +437,11 @@ void setup() {
     CurieIMU.setGyroRate(3200);
     CurieIMU.setAccelerometerRate(1600);
 
+    CurieIMU.setDetectionThreshold(CURIE_IMU_SHOCK, 9.81*LAUNCH_THRESHOLD_ACC*1000); // amount that counts as a launch
+    CurieIMU.setDetectionDuration(CURIE_IMU_SHOCK, 75); // constant upwards acceleration for at least 75 ms (max)
+
+    CurieIMU.setDetectionThreshold(CURIE_IMU_FREEFALL, 3.91);
+    
     while (!SD.begin(sd_pin)) {
         beep(-1); // sd card not working
     }
@@ -443,29 +456,33 @@ void setup() {
     AttachInterupts();
 
     int error = ADASSelfTest();
-
+    Serial.print("Self Test Error: ");
+    Serial.println(error);
     while (error != 0) {
         beep(error);
     }
 
     CurrieTimerOne.start(WATCHDOG_LIMIT, &WatchdogTimeout);
+    CurieIMU.interrupts(CURIE_IMU_SHOCK);
+    CurieIMU.attachInterupt(onLaunch);
+    // may need to stop interrupts on FIFO full and data ready
 }
 
 
 void loop() {
-    unsigned long start = millis();
-    CurrieTimerOne.restart(WATCHDOG_LIMIT);
-    getData();
-
-    if (ADASDataBuffer.length == 10) {
-        writeData();
-    }
-
     if (!ADAS.launched) {
-        isLaunch();
+        /*
+            Things to repeat prelaunch
+        */
+    } else if (ADAS.launched && !ADAS.descending) {
+        /*
+            Things to repeat during flight
+        */
+    } else {
+        /*
+            Things to do while descending or on the ground
+        */
+
     }
-
-
-    Serial.println(millis()-start);
 }
 
