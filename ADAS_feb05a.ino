@@ -43,13 +43,13 @@ typedef struct {
   boolean launched = false;            //Set to true when accelerometer detects launch condition.
   volatile int dir = 0;                //Current ADAS direction.
   int lastdir = -3;                     //Previous ADAS direction.
-  volatile int pulsect = 0;            //Current pulse count. Set by interrupt in ADASpulse();
-  int desiredpos = 0;                 // Set this and run ADASupdate() to move ADAS to that position. (pulses)
-  volatile boolean atlimit = false;    //True when limit switch is hit. Updated by ADASupdate() and ADAShitlimit().
+  volatile int pulse_count = 0;            //Current pulse count. Set by interrupt in ADASpulse();
+  int desiredpos = 0;                // Set this and run ADASupdate() to move ADAS to that position. (pulses)
+  volatile boolean atLimit = false;    //True when limit switch is hit. Updated by ADASupdate() and ADAShitlimit().
   unsigned int jerktime = 0; // Time change since last state change. (ms)
   boolean slow = false;               // ADAS is in slow mode.
   int error = -99;
-  boolean emergencystop = false;
+  boolean inFatalError = false;
   boolean jerk = true;
 } ADASstate;
 
@@ -66,9 +66,9 @@ File ADASdatafile;
 void ADASWDtimeout() {
   /* Executed by main watchdog timer if it times out */
 
-  ADAS.emergencystop = true; // emergency stop
+  ADAS.inFatalError = true; // emergency stop
   MotorStop();
-  ADAS.desiredpos = ADAS.pulsect;
+  ADAS.desiredpos = ADAS.pulse_count;
   ADASbeep(-99); // beep
 }
 
@@ -115,26 +115,34 @@ void ADASpulse() {
     using port manipulation but the indirect approach here seems reliable.
   */
 
+  if (ADAS.inFatalError) {
+    MotorStop(); // stop motor entirely
+    ADASbeep(-99); // beep like nothing else
+    return;
+  }
 
-  if (ADAS.emergencystop) { //This is a fatal condition. ADAS must be reset to clear.
-    ADAS.desiredpos = ADAS.pulsect;
+  if (ADAS.pulse_count < ADAS.)
+
+
+  if (ADAS.inFatalError) { //This is a fatal condition. ADAS must be reset to clear.
+    ADAS.desiredpos = ADAS.pulse_count;
     ADASbeep(-99);
     return;
   }
   if (ADAS.dir == 1) {
-    ADAS.pulsect++;
+    ADAS.pulse_count++;
   } else if (ADAS.dir == -1)  {
-    ADAS.pulsect--;
+    ADAS.pulse_count--;
   }
 
-  if ((ADAS.pulsect >= (ADAS.desiredpos - ADAS_ERROR)) && (ADAS.pulsect <= (ADAS.desiredpos + ADAS_ERROR))) {
+  if ((ADAS.pulse_count >= (ADAS.desiredpos - ADAS_ERROR)) && (ADAS.pulse_count <= (ADAS.desiredpos + ADAS_ERROR))) {
     ADAS.dir = 0;
     digitalWrite(hbridgeIN1pin, HIGH);
     digitalWrite(hbridgeIN2pin, HIGH);
     digitalWrite(hbridgeENpin, LOW);
 
   }
-  if (ADAS.pulsect >= ADAS_MAX_DEPLOY) {
+  if (ADAS.pulse_count >= ADAS_MAX_DEPLOY) {
     ADAS.dir = 0;
     ADAS.desiredpos = ADAS_MAX_DEPLOY;
     digitalWrite(hbridgeIN1pin, HIGH);
@@ -157,16 +165,16 @@ void ADASzero() {
     called on interupt from optical limit switch
   */
   Serial.println("Limit Switch Triggered");
-  ADAS.pulsect = 0;
+  ADAS.pulse_count = 0;
   MotorStop();
 }
 
 void ADASmove() {
   /*
-    Actually moves the ADAS motor according to ADAS.desiredpos and ADAS.pulsect.
+    Actually moves the ADAS motor according to ADAS.desiredpos and ADAS.pulse_count.
   */
   static unsigned int lastmillis = 0;
-  if (ADAS.emergencystop) {
+  if (ADAS.inFatalError) {
     MotorStop();
     ADASbeep(-99);
     return;
@@ -205,16 +213,16 @@ void ADASupdate() {
     ADAS.jerk = false;
   }
 
-  if (ADAS.pulsect <= (ADAS.desiredpos - ADAS_ERROR)) { // Need to go forward to achieve target pos.
+  if (ADAS.pulse_count <= (ADAS.desiredpos - ADAS_ERROR)) { // Need to go forward to achieve target pos.
     ADAS.dir = 1;
     ADAS.lastdir = ADAS.dir;
-    if (ADAS.pulsect >= (ADAS.desiredpos - ADAS_SLOW_THRESH)) { //slow when approaching target
+    if (ADAS.pulse_count >= (ADAS.desiredpos - ADAS_SLOW_THRESH)) { //slow when approaching target
       ADAS.slow = true;
     }
-  } else if (ADAS.pulsect >= (ADAS.desiredpos + ADAS_ERROR)) { // Need to go reverse to achieve target pos.
+  } else if (ADAS.pulse_count >= (ADAS.desiredpos + ADAS_ERROR)) { // Need to go reverse to achieve target pos.
     ADAS.dir = -1;
     ADAS.lastdir = ADAS.dir;
-    if ( ADAS.pulsect <= (ADAS.desiredpos + ADAS_SLOW_THRESH)) { //slow when approaching target
+    if ( ADAS.pulse_count <= (ADAS.desiredpos + ADAS_SLOW_THRESH)) { //slow when approaching target
       ADAS.slow = true;
     }
   }
@@ -293,7 +301,7 @@ void writeData() {
       ADASdatafile.print("\t");
       ADASdatafile.print(ADAS.launched);
       ADASdatafile.print("\t");
-      ADASdatafile.print(ADAS.pulsect);
+      ADASdatafile.print(ADAS.pulse_count);
       ADASdatafile.print("\t");
       ADASdatafile.print(ADAS.desiredpos);
       ADASdatafile.print("\t");
@@ -353,9 +361,9 @@ int ADASselftest() {
     SD card write and read test. Returns 0 if
     everything is OK. A negative if not so.
   */
-  static int lastpulsect = ADAS.pulsect;
+  static int lastpulse_count = ADAS.pulse_count;
 
-  for ( int i = 0; i < 1000 && lastpulsect == ADAS.pulsect; i++) {
+  for ( int i = 0; i < 1000 && lastpulse_count == ADAS.pulse_count; i++) {
     digitalWrite(hbridgeENpin, HIGH);
     digitalWrite(hbridgeIN1pin, HIGH); //test stop condition 1
     digitalWrite(hbridgeIN2pin, HIGH);
@@ -363,65 +371,65 @@ int ADASselftest() {
     digitalWrite(hbridgeIN2pin, LOW);
     delay(10);
   }
-  if (lastpulsect != ADAS.pulsect) { // Stop condition falure.
+  if (lastpulse_count != ADAS.pulse_count) { // Stop condition falure.
     ADAS.error = -2;
     return ADAS.error;
   }
-  ADAS.desiredpos = ADAS.pulsect + ADAS_ERROR + 2; //test forward condition.
+  ADAS.desiredpos = ADAS.pulse_count + ADAS_ERROR + 2; //test forward condition.
   for (int i = 0; i < 100; i++) {
     ADASupdate();
     delay(1);
   }
-  if (ADAS.pulsect < lastpulsect) { //Polarity swapped.
+  if (ADAS.pulse_count < lastpulse_count) { //Polarity swapped.
     ADAS.error = -3;
-    ADAS.emergencystop = true;
+    ADAS.inFatalError = true;
     return ADAS.error;
   }
-  if (ADAS.pulsect == lastpulsect) { //Motor not moving.
+  if (ADAS.pulse_count == lastpulse_count) { //Motor not moving.
     ADAS.error = -4;
     ADAS.desiredpos = 0;
     return ADAS.error;
   }
 
-  ADAS.desiredpos = ADAS.pulsect - ADAS_ERROR - 2; //test reverse condition.
+  ADAS.desiredpos = ADAS.pulse_count - ADAS_ERROR - 2; //test reverse condition.
   for (int i = 0; i < 1000; i++) {
     ADASupdate();
     delay(1);
   }
-  if (ADAS.pulsect > lastpulsect) { //Polarity swapped.
+  if (ADAS.pulse_count > lastpulse_count) { //Polarity swapped.
     ADAS.error = -5;
     ADAS.desiredpos = 0;
     return ADAS.error;
   }
-  if (ADAS.pulsect == lastpulsect) { //Motor not moving this time. Reverse is not working.
+  if (ADAS.pulse_count == lastpulse_count) { //Motor not moving this time. Reverse is not working.
     ADAS.error = -6;
     ADAS.desiredpos = 0;
     return ADAS.error;
   }
 
   ADAS.desiredpos = ADAS_MAX_DEPLOY; //test full range
-  for (int i = 0; i < 2000 && lastpulsect == ADAS.pulsect; i++) {
+  for (int i = 0; i < 2000 && lastpulse_count == ADAS.pulse_count; i++) {
     ADASupdate();
     delay(10);
   }
   ADAS.desiredpos = 50;
-  for (int i = 0; i < 2000 && lastpulsect == ADAS.pulsect; i++) {
+  for (int i = 0; i < 2000 && lastpulse_count == ADAS.pulse_count; i++) {
     ADASupdate();
     delay(10);
   }
-  if ((ADAS.pulsect > (50 + ADAS_ERROR)) || (ADAS.pulsect < (50 - ADAS_ERROR))) { //Motor indexing issue.
+  if ((ADAS.pulse_count > (50 + ADAS_ERROR)) || (ADAS.pulse_count < (50 - ADAS_ERROR))) { //Motor indexing issue.
     ADAS.error = -7;
     return ADAS.error;
   }
 
   ADAS.desiredpos = 0 - ADAS_ERROR - 1;
-  for (int i = 0; i < 1000 && lastpulsect == ADAS.pulsect; i++) {
+  for (int i = 0; i < 1000 && lastpulse_count == ADAS.pulse_count; i++) {
     ADASupdate();
     delay(10);
   }
-  if ((ADAS.pulsect > (0 + ADAS_ERROR)) || (ADAS.pulsect < (0 - ADAS_ERROR))) { //Motor past limit. Fins disengaged or limit switch failure.
+  if ((ADAS.pulse_count > (0 + ADAS_ERROR)) || (ADAS.pulse_count < (0 - ADAS_ERROR))) { //Motor past limit. Fins disengaged or limit switch failure.
     ADAS.error = -8;
-    ADAS.emergencystop = true;
+    ADAS.inFatalError = true;
     return ADAS.error;
   }
 
@@ -573,7 +581,5 @@ void loop() {
   ADASlaunchtest();
   Serial.println(ADAS.launched);
   Serial.println(ADAS.error);
-
-
 }
 
