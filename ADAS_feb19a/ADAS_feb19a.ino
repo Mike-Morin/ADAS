@@ -23,6 +23,7 @@ const int IMU_UPDATE_RATE = 25; // (hz) number of times the imu is read per seco
 const int IMU_ACC_RANGE = 2; // (g) accelerometer range for
 
 const int WATCHDOG_LIMIT = 1000000; // timeout in miliseconds
+const int ADAS_POS_ERROR = 5; // (steps) number of motor overshoot steps allowed.
 
 /* pin definitions */
 const int hbridgeIN1_pin = 2;
@@ -125,12 +126,13 @@ void onEncoderPulse() {
     // always increment position
     if (ADAS.enforce_target) { // if we arent testing
         if ( ADAS.target < ADAS_MAX_POSITION && ADAS.target > 0) {
+
             // set direction of motor
-            if (ADAS.position < ADAS.target && ADAS.direction != FORWARD) {
+            if (ADAS.position < (ADAS.target - ADAS_POS_ERROR) && ADAS.direction != FORWARD) {
                 SetMotorDirection(FORWARD);
-            } else if (ADAS.position > ADAS.target && ADAS.direction != REVERSE) {
+            } else if (ADAS.position > (ADAS.target + ADAS_POS_ERROR) && ADAS.direction != REVERSE) {
                 SetMotorDirection(REVERSE);
-            } else {
+            } else if (ADAS.position > (ADAS.target - ADAS_POS_ERROR) &&  ADAS.position < (ADAS.target + ADAS_POS_ERROR)){
                 SetMotorDirection(STOP);
             }
 
@@ -149,6 +151,9 @@ void onEncoderPulse() {
             }
         }
     }
+
+    Serial.println(ADAS.position);
+
 }
 
 void onLimitReached() {
@@ -168,12 +173,15 @@ void SetMotorDirection(int direction) {
         sets the ADAS motor direction
     */
     if (direction == FORWARD) { //forward
+        ADAS.direction = 1;
         digitalWrite(hbridgeIN1_pin, HIGH);
         digitalWrite(hbridgeIN2_pin, LOW);
     } else if (direction == REVERSE) { //reverse
+        ADAS.direction = -1;
         digitalWrite(hbridgeIN1_pin, LOW);
         digitalWrite(hbridgeIN2_pin, HIGH);
     } else if (direction == STOP) { // STOP
+        ADAS.direction = 0;
         digitalWrite(hbridgeIN1_pin, HIGH);
         digitalWrite(hbridgeIN2_pin, HIGH);
     }
@@ -269,7 +277,7 @@ void WriteData() {
 
 void AttachInterrupts() {
     attachInterrupt(digitalPinToInterrupt(encoderA_pin), onEncoderPulse, RISING);
-    attachInterrupt(digitalPinToInterrupt(limitswitch_pin), onLimitReached, FALLING); // falling edge because when the limit swich is  normally closed
+    attachInterrupt(digitalPinToInterrupt(limitswitch_pin), onLimitReached, FALLING); // falling edge because when the limit swich is active low
     if (!ADAS.launched) {
         if (CurieIMU.getInterruptStatus(CURIE_IMU_SHOCK)) {
             onLaunch();
@@ -292,6 +300,8 @@ void DetachInterrupts() {
 }
 
 int ADASSelfTest() {
+    Serial.println(ADAS.position);
+
     /*
         Selftest program run ever time it initializes
         must be run after interrupts are set
@@ -322,9 +332,10 @@ int ADASSelfTest() {
     SetMotorDirection(FORWARD);
     delay(100);
 
-    if (pc < ADAS.position) {
+    if (pc > ADAS.position) {
         return -4; // motor went reverse instead of forwards
     } else if (pc == ADAS.position) {
+
         return -5; // motor didn't move
     }
 
@@ -339,7 +350,7 @@ int ADASSelfTest() {
     SetMotorDirection(REVERSE);
     delay(100);
     SetMotorDirection(STOP);
-    if (pc > ADAS.position ) {
+    if (pc < ADAS.position ) {
         return -7; // motor went forwards instead of reverse
     } else if (pc == ADAS.position) {
         return -8; // motor didn't move when in reverse
@@ -350,11 +361,12 @@ int ADASSelfTest() {
 
     ADAS.target = 220;
     SetMotorDirection(FORWARD);
-    delay(1000); // wait until ADAS should be fully extended
+    delay(2000); // wait until ADAS should be fully extended
     SetMotorDirection(STOP);
-    if (ADAS.position > ADAS.target) {
+    if (ADAS.position > (ADAS.target + ADAS_POS_ERROR)) {
+        Serial.print(ADAS.position);
         return -9; // over shot on full extend
-    } else if (ADAS.position < ADAS.target) {
+    } else if (ADAS.position < (ADAS.target - ADAS_POS_ERROR)) {
         return -10; // under shot on full extend
     }
 
@@ -499,10 +511,10 @@ void setup() {
     microsPerReading = 1000000/IMU_UPDATE_RATE;
     microsPrevious = micros();
 
-    while (!SD.begin(sd_pin)) {
+   /* while (!SD.begin(sd_pin)) {
         beep(-1); // sd card not working
     }
-    beep(1); // sd card working
+    beep(1); // sd card working*/
 
     pinMode(hbridgeIN1_pin, OUTPUT);
     pinMode(hbridgeIN2_pin, OUTPUT);
@@ -513,13 +525,15 @@ void setup() {
     AttachInterrupts();
 
     int error = ADASSelfTest();
-    Serial.print("Self Test Error: ");
-    Serial.println(error);
+
     while (error != 0) {
+        Serial.print("Self Test Error: ");
+        Serial.println(error);
         beep(error);
     }
 
     // use internal Curie stuff for interupts for speed and ease of operation
+
     CurieTimerOne.start(WATCHDOG_LIMIT, &WatchdogTimeout);
     CurieIMU.interrupts(CURIE_IMU_SHOCK);
     CurieIMU.attachInterrupt(onLaunch);
