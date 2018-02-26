@@ -1,22 +1,28 @@
 /*
     Complete refactor of the ADAS_feb05a sketch to with less loops and more async.
-    Most hard work is done by interrupts and the rest is left to 
+    Most hard work is done by interrupts and the rest is left to
 */
 
-#include "MS5607/IntersemaBaro.h"
-#include <CurieTimerOne.h>
-#include <SPI.h>
-#include <SD.h>
-#include <Wire.h>
-#include <CurieIMU.h>
+#include "MS5607/IntersemaBaro.h" // barometric altimeter
+#include <CurieTimerOne.h> // curie watchdog timer
+#include <SPI.h> // spi library
+#include <SD.h> // SD card library
+#include <Wire.h> // wire library
+#include <CurieIMU.h> // Internal IMU library
+#include <MagwickAHRS.h> // Magic IMU positioning angle library
+#include <math.h> // MATH
+#include <MPU6050.h> // External, nicer altimeter used as the data source
 
 const int ADAS_MAX_POSITION = 220; // (steps) max number of steps that adas can be away from 0
 const int ADAS_NORMAL_PWM = 255; // (#/255) normal pwm
 const int ADAS_SLOW_PWM = 75; // (#/255) pwm of slow mode
 const int CREEPUP_THRESHOLD = 10; // (steps) number of steps away from ADAS's target position where slow mode is engaged
 const int LAUNCH_THRESHOLD_ACC = 4; // (G) amount of acceleration needed to trip the launch detection
+const int IMU_UPDATE_RATE = 25; // (hz) number of times the imu is read per second
 
-const int WATCHDOG_LIMIT = 1000000;
+const int IMU_ACC_RANGE = 2; // (g) accelerometer range for
+
+const int WATCHDOG_LIMIT = 1000000; // timeout in miliseconds
 
 /* pin definitions */
 const int hbridgeIN1_pin = 2;
@@ -26,6 +32,7 @@ const int limitswitch_pin = 4;
 const int beeper_pin = 3;
 const int encoderA_pin = 7;
 const int sd_pin = 10;
+
 
 /*
     pin defs in the SPI library
@@ -60,21 +67,21 @@ typedef struct {
 // data buffer struct, allows you to easily (and relatively painlessly) add more sensors and such
 typedef struct {
     int length;
-    uint64_t ts[10];
+    unsigned long ts[10];
     float accelerometer[10][3]; // 3 axis
     float gyroscope[10][3]; // 3 axis
-    float temperature[10];
+    float angle[10][3];
+    float velocity[10];
+    float position[10];
+    float vertical_velocity[10];
     float altimeter[10];
-    bool launched[10];
-    int position[10];
-    bool target[10];
-    int direction[10];
 } DataBuffer;
 
 ADASstate ADAS;
 DataBuffer DB;
 Intersema::BaroPressure_MS5607B MS5607alt(true);
-
+MPU6050 IMU;
+Magwick filter;
 
 // interrupt driven functions
 void WatchdogTimeout() {
@@ -97,7 +104,7 @@ void onLaunch() {
         CurieIMU.interrupts(CURIE_IMU_FREEFALL);
         CurieIMU.attachInterrupt(onApogee);
     }
-    
+
 
 }
 
@@ -110,7 +117,7 @@ void onApogee() {
 }
 
 void onEncoderPulse() {
-    /* 
+    /*
         Executed when encoder pulse is recieved
     */
 
@@ -118,7 +125,7 @@ void onEncoderPulse() {
     // always increment position
     if (ADAS.enforce_target) { // if we arent testing
         if ( ADAS.target < ADAS_MAX_POSITION && ADAS.target > 0) {
-            // set direction of motor 
+            // set direction of motor
             if (ADAS.position < ADAS.target && ADAS.direction != FORWARD) {
                 SetMotorDirection(FORWARD);
             } else if (ADAS.position > ADAS.target && ADAS.direction != REVERSE) {
@@ -148,7 +155,7 @@ void onLimitReached() {
     /*
         When minimum limit reached
     */
-    
+
     // zero the position
     ADAS.position = 0;
     // stop the motors
@@ -157,7 +164,7 @@ void onLimitReached() {
 
 // normal functions
 void SetMotorDirection(int direction) {
-    /* 
+    /*
         sets the ADAS motor direction
     */
     if (direction == FORWARD) { //forward
@@ -404,7 +411,7 @@ File open(char filename[], byte mode) {
 
 void close(File file) {
     file.close();
-    AttachInterrupts(); // reattach the interrupts 
+    AttachInterrupts(); // reattach the interrupts
     onEncoderPulse(); // sorts everything out based on where the position is and where the target position is
 }
 
@@ -442,20 +449,56 @@ void beep(int code) {
   }
 }
 
+
+float convertRawAcceleration(int aRaw) {
+  // since we are using 2G range
+  // -2g maps to a raw value of -32768
+  // +2g maps to a raw value of 32767
+
+  float a = (aRaw * 2.0) / 32768.0;
+  return a;
+}
+
+float convertRawGyro(int gRaw) {
+  // since we are using 250 degrees/seconds range
+  // -250 maps to a raw value of -32768
+  // +250 maps to a raw value of 32767
+
+  float g = (gRaw * 250.0) / 32768.0;
+  return g;
+}
+
+float g;
+unsigned long microsPerReading, microsPrevious; // number of micros per reading that are required and the micros of the previous reading
+
 void setup() {
+    Wire.begin();
     Serial.begin(9600);
 
     MS5607alt.init();
+
+    // configure onboard IMU, used for detecting launch and apogee only,
     CurieIMU.begin();
     CurieIMU.setAccelerometerRange(16);
-    CurieIMU.setGyroRate(3200);
     CurieIMU.setAccelerometerRate(1600);
 
     CurieIMU.setDetectionThreshold(CURIE_IMU_SHOCK, 9.81*LAUNCH_THRESHOLD_ACC*1000); // amount that counts as a launch
     CurieIMU.setDetectionDuration(CURIE_IMU_SHOCK, 75); // constant upwards acceleration for at least 75 ms (max)
 
     CurieIMU.setDetectionThreshold(CURIE_IMU_FREEFALL, 3.91);
-    
+
+    // configure better, external imu
+    IMU.initialize();
+    IMU.setRate(IMU_UPDATE_RATE);
+
+    g = sqrt()
+
+    filter.begin(IMU_UPDATE_RATE);
+
+    // configure micros per reading and previous micros
+    microsPerReading = 1000000/IMU_UPDATE_RATE;
+    microsPrevious = micros();
+
     while (!SD.begin(sd_pin)) {
         beep(-1); // sd card not working
     }
@@ -476,20 +519,25 @@ void setup() {
         beep(error);
     }
 
+    // use internal Curie stuff for interupts for speed and ease of operation
     CurieTimerOne.start(WATCHDOG_LIMIT, &WatchdogTimeout);
     CurieIMU.interrupts(CURIE_IMU_SHOCK);
     CurieIMU.attachInterrupt(onLaunch);
     // may need to stop interrupts on FIFO full and data ready
 }
 
+unsigned long loopcount = 0;
 
 void loop() {
     CurieTimerOne.restart(WATCHDOG_LIMIT);
-    GetData();
-    if (DB.length == 10) {
-        WriteData();
-    }
+    GetData(); // always collect data
+
     if (!ADAS.launched) {
+        if (loopcount % 20 == 0) { // collect data at half speed on the launch pad
+          if (DB.length == 10) {
+              WriteData();
+          }
+        }
         /*
             Things to repeat prelaunch
         */
@@ -503,5 +551,5 @@ void loop() {
         */
 
     }
+    loopcount++;
 }
-
