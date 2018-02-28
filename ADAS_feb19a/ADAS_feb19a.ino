@@ -544,6 +544,7 @@ void setup() {
 unsigned long loopcount = 0;
 
 //Global variables
+unsigned long prev_time = 0; //measured in seconds
 
 void loop() {
     CurieTimerOne.restart(WATCHDOG_LIMIT);
@@ -558,29 +559,25 @@ void loop() {
         /*
             Things to repeat prelaunch
         */
+        prev_time = millis()/1000;
     } else if (ADAS.launched && !ADAS.descending) {
         /*
-         Things to do during flight upwards
-         */
-        float my_height = 0; //read height from the sensors
-        float my_velocity = 0; //calculate the current velocity
-  
-        float wanted_velocity = calc_velocity(my_height);
-        float cur_signal = my_velocity-wanted_velocity;
-  
-        float deriv_signal = (cur_signal-prev_signal)/delta_t; ////////////////////I dont know how to do time stamp things/////////////////
-  
-        //don't do integral control for now, not worth it and isn't effective
-  
-        float final_signal = (k_p * cur_signal + k_d * deriv_signal)*signal_to_ADAS_depl;
-  
-        //update variables
-        prev_signal = cur_signal;
-         
+        Things to do during flight upwards
+        */
+        //record sensor data
+        writeData();
+        
+        //update the ADAS position
+        cur_time = millis()*1000;
+        time_diff = cur_time - prev_time;
+        new_ADAS_deployment = PID(height, velocity, prev_signal, time_diff);
+        /////update the actual ADAS deployment, this is a ratio to the maximum deployment
+        prev_time = cur_time;
     } else {
         /*
             Things to do while descending or on the ground
         */
+        //retract ADAS fins
 
     }
     loopcount++;

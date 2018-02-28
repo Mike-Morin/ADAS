@@ -75,7 +75,7 @@ double calc_velocity(float height){
 
 
 /*
- * returns the new deployment that ADAS should be deployed to
+ * returns the new deployment of ADAS
  */
 double PID(float my_height, double my_velocity, float prev_signal, float delta_t){ 
   
@@ -97,8 +97,7 @@ double PID(float my_height, double my_velocity, float prev_signal, float delta_t
   if(new_deployment < 0){
     new_deployment = 0;
   }
-
-  return new_deployment;
   
+  return new_deployment;
 }
 
