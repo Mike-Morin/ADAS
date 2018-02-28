@@ -7,11 +7,12 @@
 #include <CurieTimerOne.h> // curie watchdog timer
 #include <SPI.h> // spi library
 #include <SD.h> // SD card library
-#include <Wire.h> // wire library
+#include <wire.h> // wire library
 #include <CurieIMU.h> // Internal IMU library
 #include <MagwickAHRS.h> // Magic IMU positioning angle library
 #include <math.h> // MATH
 #include <MPU6050.h> // External, nicer altimeter used as the data source
+#include <adas_pid.h> //velocity calculator and pid
 
 const int ADAS_MAX_POSITION = 220; // (steps) max number of steps that adas can be away from 0
 const int ADAS_NORMAL_PWM = 255; // (#/255) normal pwm
@@ -542,6 +543,8 @@ void setup() {
 
 unsigned long loopcount = 0;
 
+//Global variables
+
 void loop() {
     CurieTimerOne.restart(WATCHDOG_LIMIT);
     GetData(); // always collect data
@@ -557,8 +560,23 @@ void loop() {
         */
     } else if (ADAS.launched && !ADAS.descending) {
         /*
-            Things to repeat during flight
-        */
+         Things to do during flight upwards
+         */
+        float my_height = 0; //read height from the sensors
+        float my_velocity = 0; //calculate the current velocity
+  
+        float wanted_velocity = calc_velocity(my_height);
+        float cur_signal = my_velocity-wanted_velocity;
+  
+        float deriv_signal = (cur_signal-prev_signal)/delta_t; ////////////////////I dont know how to do time stamp things/////////////////
+  
+        //don't do integral control for now, not worth it and isn't effective
+  
+        float final_signal = (k_p * cur_signal + k_d * deriv_signal)*signal_to_ADAS_depl;
+  
+        //update variables
+        prev_signal = cur_signal;
+         
     } else {
         /*
             Things to do while descending or on the ground
