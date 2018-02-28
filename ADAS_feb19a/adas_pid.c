@@ -1,8 +1,6 @@
 //cosntants
 float k_d = 0.1;
 float k_p = 0.9;
-float signal_to_ADAS_depl = 90;
-float delta_t = 0.01;
 
 
 //global variables
