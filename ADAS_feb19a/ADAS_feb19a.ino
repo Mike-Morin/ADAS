@@ -559,20 +559,33 @@ void loop() {
         /*
             Things to repeat prelaunch
         */
-        prev_time = millis()/1000;
     } else if (ADAS.launched && !ADAS.descending) {
         /*
         Things to do during flight upwards
         */
         //record sensor data
         writeData();
-        
         //update the ADAS position
-        cur_time = millis()*1000;
-        time_diff = cur_time - prev_time;
-        new_ADAS_deployment = PID(height, velocity, prev_signal, time_diff);
-        /////update the actual ADAS deployment, this is a ratio to the maximum deployment
-        prev_time = cur_time;
+        float height = DB.position[DB.length-1];
+        float velocity = DB.vertical_velocity[DB.length-1];
+        float prev_deployment = ADAS.target/ADAS_MAX_POS;  //the ratio of the previous deployment to full deployment
+        
+        if(DB.length == 0){
+          float cur_time = DB.ts[9];
+          float prev_time = DB.ts[8];
+        }
+        else if(DB.length == 1){
+          float cur_time = DB.ts[0];
+          float prev_time = DB.ts[9];
+        }
+        else{
+          float cur_time = DB.ts[DB.length-1];
+          float prev_time = DB.ts[DB.length-2];
+        }
+        float time_diff = cur_time - prev_time;
+        double new_ADAS_deployment = PID(height, velocity, prev_signal, time_diff);
+        //update the actual ADAS deployment
+        ADAS.target = new_ADAS_deployment*ADAS_MAX_POS;
     } else {
         /*
             Things to do while descending or on the ground

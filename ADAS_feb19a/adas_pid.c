@@ -1,7 +1,7 @@
-//cosntants
+//constants
 float k_d = 0.1;
 float k_p = 0.9;
-float signal_to_ADAS_depl = 0.01;  //converts between the signal units to the deployment percentage units
+float signal_to_ADAS_ratio = 0.01;  //converts between the signal units to the deployment percentage units
 
 
 //global variables
@@ -80,16 +80,15 @@ double calc_velocity(float height){
 double PID(float my_height, double my_velocity, float prev_signal, float delta_t){ 
   
   float wanted_velocity = calc_velocity(my_height);
-  float cur_signal = my_velocity-wanted_velocity;
+  float cur_signal = (my_velocity-wanted_velocity)*signal_to_ADAS_ratio;//converted to a number between 0 and 1 ish so that its comparable to prev_signal
   
-  float deriv_signal = (cur_signal-prev_signal)/delta_t;
+  
+  float deriv_signal = (cur_signal-prev_signal)/delta_t*signal_to_ADAS_ratio; //cur_sig-prev_sig is approx between 0 and 1, divided by delta t is on the order of 100-1000 so multiply by ///////////NEEED TO FIND TEH FREQUENCY TO MAKE THIS GUUUUUDD
   //don't do integral control for now, not worth it and isn't effective
   
-  float final_signal = (k_p * cur_signal + k_d * deriv_signal)*signal_to_ADAS_depl;
-
-  new_deployment = prev_deployment + final_signal
-
-
+  float final_signal = (k_p * cur_signal + k_d * deriv_signal);
+  
+  float new_deployment = prev_signal + final_signal;
   //check that the new deployment is not out of the desired range of 0 to 1
   if(new_deployment > 1){
     new_deployment = 1;
@@ -100,4 +99,3 @@ double PID(float my_height, double my_velocity, float prev_signal, float delta_t
   
   return new_deployment;
 }
-
