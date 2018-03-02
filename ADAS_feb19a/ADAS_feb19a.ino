@@ -106,8 +106,6 @@ void onLaunch() {
         CurieIMU.interrupts(CURIE_IMU_FREEFALL);
         CurieIMU.attachInterrupt(onApogee);
     }
-
-
 }
 
 void onApogee() {
@@ -115,6 +113,7 @@ void onApogee() {
         ADAS.descending = true;
         ADAS.target = 0; // retract aerobreak for safe landings
         SetMotorDirection(REVERSE);
+    	CurieIMU.detachInterrupt();
     }
 }
 
@@ -177,14 +176,17 @@ void SetMotorDirection(int direction) {
         ADAS.direction = 1;
         digitalWrite(hbridgeIN1_pin, HIGH);
         digitalWrite(hbridgeIN2_pin, LOW);
+	return;
     } else if (direction == REVERSE) { //reverse
         ADAS.direction = -1;
         digitalWrite(hbridgeIN1_pin, LOW);
         digitalWrite(hbridgeIN2_pin, HIGH);
+	return;
     } else if (direction == STOP) { // STOP
         ADAS.direction = 0;
         digitalWrite(hbridgeIN1_pin, HIGH);
         digitalWrite(hbridgeIN2_pin, HIGH);
+	return;
     }
 }
 
