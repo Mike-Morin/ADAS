@@ -14,7 +14,7 @@ Stop mode 2 (both pins low) did not work as intended
 
 ### Error 4
 
-Motor went in reverse instead of forward
+Zeroing problem
 
 ### Error 5
 

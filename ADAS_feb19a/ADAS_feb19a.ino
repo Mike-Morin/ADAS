@@ -15,7 +15,6 @@
 
 const int ADAS_MAX_POS = 220; // (steps) max number of steps that adas can be away from 0
 const int ADAS_NORMAL_PWM = 255; // (#/255) normal pwm
-const int ADAS_SLOW_PWM = 75; // (#/255) pwm of slow mode
 const int CREEPUP_THRESHOLD = 10; // (steps) number of steps away from ADAS's target position where slow mode is engaged
 const int LAUNCH_THRESHOLD_ACC = 4; // (G) amount of acceleration needed to trip the launch detection
 const int IMU_UPDATE_RATE = 25; // (hz) number of times the imu is read per second
@@ -46,9 +45,12 @@ const int sd_pin = 10;
 // function and type definitions
 
 // directions that the motor is allowed to go
-const int FORWARD = 1;
-const int STOP = 0;
-const int REVERSE = -1;
+
+enum dir {
+  FORWARD,
+  REVERSE,
+  STOP
+};
 
 
 
@@ -62,7 +64,7 @@ typedef struct {
     volatile int target = 0;
     volatile int position = 0;
     volatile int error = 0;
-    volatile int direction = 0;
+    dir direction = STOP;
 } ADASstate;
 
 // data buffer struct, allows you to easily (and relatively painlessly) add more sensors and such
@@ -79,7 +81,7 @@ typedef struct {
     float temperature[10];
     bool launched[10];
     int target[10];
-    float direction[10];
+    dir direction[10];
 } DataBuffer;
 
 ADASstate ADAS;
@@ -125,6 +127,19 @@ void onEncoderPulse() {
         Executed when encoder pulse is recieved
     */
 
+    switch (ADAS.direction) {
+      case FORWARD:
+        ADAS.position++;
+        break;
+      case REVERSE:
+        ADAS.position--;
+        break;
+      case STOP:
+        SetMotorDirection(STOP);
+        break;
+    }
+    
+
     ADAS.position = ADAS.position+ADAS.direction;
     // always increment position
     if (ADAS.enforce_target) { // if we arent testing
@@ -138,15 +153,8 @@ void onEncoderPulse() {
             } else if (ADAS.position > (ADAS.target - ADAS_POS_ERROR) &&  ADAS.position < (ADAS.target + ADAS_POS_ERROR)){
                 SetMotorDirection(STOP);
             }
-
-            if (!ADAS.slowmode && abs(ADAS.target - ADAS.position) < CREEPUP_THRESHOLD) {
-                SetMotorSpeed(ADAS_SLOW_PWM);
-                ADAS.slowmode = true;
-            } else if (ADAS.slowmode && abs(ADAS.target - ADAS.position) > CREEPUP_THRESHOLD) {
-                SetMotorSpeed(ADAS_NORMAL_PWM);
-                ADAS.slowmode = false;
-            }
         } else {
+            SetMotorDirection(STOP);
             if (ADAS.target > ADAS_MAX_POS) { // if target is set higher than allowed
                 ADAS.target = ADAS_MAX_POS;
             } else if (ADAS.target < 0) {
@@ -168,21 +176,23 @@ void onLimitReached() {
 }
 
 // normal functions
-void SetMotorDirection(int direction) {
+void SetMotorDirection(dir foo) {
     /*
         sets the ADAS motor direction
     */
-    if (direction == FORWARD) { //forward
+    if (foo == FORWARD) { //forward
         ADAS.direction = FORWARD;
+        digitalWrite(hbridgeEN_pin, HIGH);
         digitalWrite(hbridgeIN1_pin, HIGH);
         digitalWrite(hbridgeIN2_pin, LOW);
-	return;
-    } else if (direction == REVERSE) { //reverse
+	      return;
+    } else if (foo == REVERSE) { //reverse
         ADAS.direction = REVERSE;
+        digitalWrite(hbridgeEN_pin, HIGH);
         digitalWrite(hbridgeIN1_pin, LOW);
         digitalWrite(hbridgeIN2_pin, HIGH);
 	return;
-    } else if (direction == STOP) { // STOP
+    } else if (foo == STOP) { // STOP
         ADAS.direction = STOP;
         digitalWrite(hbridgeIN1_pin, HIGH);
         digitalWrite(hbridgeIN2_pin, HIGH);
@@ -190,12 +200,7 @@ void SetMotorDirection(int direction) {
     }
 }
 
-void SetMotorSpeed(int speed) {
-    /*
-        Sets the adas motor speed to speed (#/255)
-    */
-    analogWrite(hbridgeEN_pin, speed);
-}
+
 
 float AccelerationMagnitude(float vector[]) {
     /*
@@ -311,8 +316,6 @@ void DetachInterrupts() {
 }
 
 int ADASSelfTest() {
-    Serial.println(ADAS.position);
-
     /*
         Selftest program run ever time it initializes
         must be run after interrupts are set
@@ -325,7 +328,7 @@ int ADASSelfTest() {
     // test stop mode 1 (both pins high)
     digitalWrite(hbridgeIN1_pin, HIGH);
     digitalWrite(hbridgeIN2_pin, HIGH);
-    delay(700);
+    delay(1000);
 
     if (pc != ADAS.position) {
         return -2; // stop mode 1 did not work as intended
@@ -333,79 +336,23 @@ int ADASSelfTest() {
     // test stop mode 2 (both pins low)
     digitalWrite(hbridgeIN1_pin, LOW);
     digitalWrite(hbridgeIN2_pin, LOW);
-    delay(700);
+    delay(1000);
 
     if (pc != ADAS.position) {
         return -3; // stop mode 1 did not work as intended
     }
     // check if motor can go forward
     // pc should not have changed yet
-    SetMotorDirection(FORWARD);
-    delay(700);
+    
+    ADAS.enforce_target = true;
 
-    if (pc > ADAS.position) {
-        return -4; // motor went reverse instead of forwards
-    } else if (pc == ADAS.position) {
-
-        return -5; // motor didn't move
-    }
-
-    SetMotorDirection(STOP);
-    pc = ADAS.position;
-    delay(700);
-
-    if (pc != ADAS.position) {
-        return -6; // motor did not stop
-    }
-
+    ADAS.position = 200;
     SetMotorDirection(REVERSE);
-    delay(700);
-    SetMotorDirection(STOP);
-    if (pc < ADAS.position ) {
-        return -7; // motor went forwards instead of reverse
-    } else if (pc == ADAS.position) {
-        return -8; // motor didn't move when in reverse
+    delay(2000);
+
+    if (ADAS.position != 0) {
+      return -4; // Zeroing problem
     }
-
-    ADAS.enforce_target = true; // reset adas.enforce target
-
-
-    ADAS.target = 220;
-    SetMotorDirection(FORWARD);
-    delay(2000); // wait until ADAS should be fully extended
-    SetMotorDirection(STOP);
-    if (ADAS.position > (ADAS.target + ADAS_POS_ERROR)) {
-        Serial.print(ADAS.position);
-        return -9; // over shot on full extend
-    } else if (ADAS.position < (ADAS.target - ADAS_POS_ERROR)) {
-        Serial.print(ADAS.position);
-
-        return -10; // under shot on full extend
-    }
-
-    ADAS.target = 0;
-    SetMotorDirection(REVERSE);
-    delay(1000);
-    SetMotorDirection(STOP);
-
-    if (ADAS.position > ADAS.target) {
-        return -11; // undershot on full retract
-    } else if (ADAS.position < ADAS.target) {
-        return -12; // overshot on full retract
-    }
-
-    ADAS.target = 1000;
-    SetMotorDirection(FORWARD);
-    delay(1500);
-    SetMotorDirection(STOP);
-    if (ADAS.position != ADAS_MAX_POS) {
-        return -13; // failed to stop at max position
-    }
-
-    ADAS.target = -1000;
-    SetMotorDirection(REVERSE);
-    delay(2000); // should be more than enough time
-    SetMotorDirection(STOP);
 /*
     if (ADAS.position != 0) {
         return -14; // failed to stop at limitswitch
@@ -429,9 +376,9 @@ int ADASSelfTest() {
 }
 
 File open(char filename[], byte mode) {
-    SetMotorSpeed(STOP); // Stop motors
+    SetMotorDirection(STOP); // Stop motors
     DetachInterrupts(); // stop interupts
-    SetMotorSpeed(STOP); // Make sure no fuckery happend while waiting for interrupts to detach or something
+    SetMotorDirection(STOP); // Make sure no fuckery happend while waiting for interrupts to detach or something
     return SD.open(filename, mode); // open file for reading
 }
 
@@ -536,13 +483,10 @@ void setup() {
 
     AttachInterrupts();
 
-    int error = ADASSelfTest();
-
-    while (error != 0) {
+    while (true) {
         Serial.print("Self Test Error: ");
-        Serial.println(error);
+        Serial.println(ADASSelfTest());
         Serial.println(ADAS.position);
-        beep(error);
     }
 
     // use internal Curie stuff for interupts for speed and ease of operation
