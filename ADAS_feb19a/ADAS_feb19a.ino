@@ -7,14 +7,13 @@
 #include <CurieTimerOne.h> // curie watchdog timer
 #include <SPI.h> // spi library
 #include <SD.h> // SD card library
-#include <wire.h> // wire library
+#include <Wire.h> // wire library
 #include <CurieIMU.h> // Internal IMU library
-#include <MagwickAHRS.h> // Magic IMU positioning angle library
+#include <MadgwickAHRS.h> // Magic IMU positioning angle library
 #include <math.h> // MATH
-#include <MPU6050.h> // External, nicer altimeter used as the data source
-#include <adas_pid.h> //velocity calculator and pid
+#include "MPU6050.h" // External, nicer altimeter used as the data source
 
-const int ADAS_MAX_POSITION = 220; // (steps) max number of steps that adas can be away from 0
+const int ADAS_MAX_POS = 220; // (steps) max number of steps that adas can be away from 0
 const int ADAS_NORMAL_PWM = 255; // (#/255) normal pwm
 const int ADAS_SLOW_PWM = 75; // (#/255) pwm of slow mode
 const int CREEPUP_THRESHOLD = 10; // (steps) number of steps away from ADAS's target position where slow mode is engaged
@@ -77,13 +76,17 @@ typedef struct {
     float position[10];
     float vertical_velocity[10];
     float altimeter[10];
+    float temperature[10];
+    bool launched[10];
+    int target[10];
+    float direction[10];
 } DataBuffer;
 
 ADASstate ADAS;
 DataBuffer DB;
 Intersema::BaroPressure_MS5607B MS5607alt(true);
 MPU6050 IMU;
-Magwick filter;
+Madgwick filter;
 
 // interrupt driven functions
 void WatchdogTimeout() {
@@ -125,7 +128,7 @@ void onEncoderPulse() {
     ADAS.position = ADAS.position+ADAS.direction;
     // always increment position
     if (ADAS.enforce_target) { // if we arent testing
-        if ( ADAS.target < ADAS_MAX_POSITION && ADAS.target > 0) {
+        if ( ADAS.target < ADAS_MAX_POS && ADAS.target > 0) {
 
             // set direction of motor
             if (ADAS.position < (ADAS.target - ADAS_POS_ERROR) && ADAS.direction != FORWARD) {
@@ -144,23 +147,20 @@ void onEncoderPulse() {
                 ADAS.slowmode = false;
             }
         } else {
-            if (ADAS.target > ADAS_MAX_POSITION) { // if target is set higher than allowed
-                ADAS.target = ADAS_MAX_POSITION;
+            if (ADAS.target > ADAS_MAX_POS) { // if target is set higher than allowed
+                ADAS.target = ADAS_MAX_POS;
             } else if (ADAS.target < 0) {
                 ADAS.target = 0;
             }
         }
     }
-
-    Serial.println(ADAS.position);
-
 }
 
 void onLimitReached() {
     /*
         When minimum limit reached
     */
-
+    Serial.println("RIP");
     // zero the position
     ADAS.position = 0;
     // stop the motors
@@ -173,17 +173,17 @@ void SetMotorDirection(int direction) {
         sets the ADAS motor direction
     */
     if (direction == FORWARD) { //forward
-        ADAS.direction = 1;
+        ADAS.direction = FORWARD;
         digitalWrite(hbridgeIN1_pin, HIGH);
         digitalWrite(hbridgeIN2_pin, LOW);
 	return;
     } else if (direction == REVERSE) { //reverse
-        ADAS.direction = -1;
+        ADAS.direction = REVERSE;
         digitalWrite(hbridgeIN1_pin, LOW);
         digitalWrite(hbridgeIN2_pin, HIGH);
 	return;
     } else if (direction == STOP) { // STOP
-        ADAS.direction = 0;
+        ADAS.direction = STOP;
         digitalWrite(hbridgeIN1_pin, HIGH);
         digitalWrite(hbridgeIN2_pin, HIGH);
 	return;
@@ -219,7 +219,7 @@ void GetData() {
         DB.length = 0; // reset adas data buffer once its been filled
     }
 
-    DB.altimeter[DB.length] = MS5607alt.getHeightCentiMeters();
+    DB.altimeter[DB.length-1] = MS5607alt.getHeightCentiMeters();
     CurieIMU.readAccelerometerScaled(
         DB.accelerometer[DB.length][0],
         DB.accelerometer[DB.length][1],
@@ -236,6 +236,14 @@ void GetData() {
     DB.target[DB.length] = ADAS.target;
     DB.direction[DB.length] = ADAS.direction;
     DB.ts[DB.length] = millis(); // doubles as a way to tell how long each loop takes
+    filter.updateIMU(
+        DB.gyroscope[DB.length][0],
+        DB.gyroscope[DB.length][1],
+        DB.gyroscope[DB.length][2],
+        DB.accelerometer[DB.length][0],
+        DB.accelerometer[DB.length][1],
+        DB.accelerometer[DB.length][2]
+    );
     DB.length++;
 
 }
@@ -317,7 +325,7 @@ int ADASSelfTest() {
     // test stop mode 1 (both pins high)
     digitalWrite(hbridgeIN1_pin, HIGH);
     digitalWrite(hbridgeIN2_pin, HIGH);
-    delay(500);
+    delay(700);
 
     if (pc != ADAS.position) {
         return -2; // stop mode 1 did not work as intended
@@ -325,7 +333,7 @@ int ADASSelfTest() {
     // test stop mode 2 (both pins low)
     digitalWrite(hbridgeIN1_pin, LOW);
     digitalWrite(hbridgeIN2_pin, LOW);
-    delay(500);
+    delay(700);
 
     if (pc != ADAS.position) {
         return -3; // stop mode 1 did not work as intended
@@ -333,7 +341,7 @@ int ADASSelfTest() {
     // check if motor can go forward
     // pc should not have changed yet
     SetMotorDirection(FORWARD);
-    delay(100);
+    delay(700);
 
     if (pc > ADAS.position) {
         return -4; // motor went reverse instead of forwards
@@ -344,14 +352,14 @@ int ADASSelfTest() {
 
     SetMotorDirection(STOP);
     pc = ADAS.position;
-    delay(100);
+    delay(700);
 
     if (pc != ADAS.position) {
         return -6; // motor did not stop
     }
 
     SetMotorDirection(REVERSE);
-    delay(100);
+    delay(700);
     SetMotorDirection(STOP);
     if (pc < ADAS.position ) {
         return -7; // motor went forwards instead of reverse
@@ -370,6 +378,8 @@ int ADASSelfTest() {
         Serial.print(ADAS.position);
         return -9; // over shot on full extend
     } else if (ADAS.position < (ADAS.target - ADAS_POS_ERROR)) {
+        Serial.print(ADAS.position);
+
         return -10; // under shot on full extend
     }
 
@@ -388,15 +398,15 @@ int ADASSelfTest() {
     SetMotorDirection(FORWARD);
     delay(1500);
     SetMotorDirection(STOP);
-    if (ADAS.position != ADAS_MAX_POSITION) {
+    if (ADAS.position != ADAS_MAX_POS) {
         return -13; // failed to stop at max position
     }
 
     ADAS.target = -1000;
     SetMotorDirection(REVERSE);
-    delay(2000);
+    delay(2000); // should be more than enough time
     SetMotorDirection(STOP);
-
+/*
     if (ADAS.position != 0) {
         return -14; // failed to stop at limitswitch
     }
@@ -414,6 +424,7 @@ int ADASSelfTest() {
         }
     }
     close(testfile);
+    */
     return 0;
 }
 
@@ -506,9 +517,7 @@ void setup() {
     IMU.initialize();
     IMU.setRate(IMU_UPDATE_RATE);
 
-    g = sqrt()
-
-    filter.begin(IMU_UPDATE_RATE);
+    //filter.begin(IMU_UPDATE_RATE);
 
     // configure micros per reading and previous micros
     microsPerReading = 1000000/IMU_UPDATE_RATE;
@@ -532,6 +541,7 @@ void setup() {
     while (error != 0) {
         Serial.print("Self Test Error: ");
         Serial.println(error);
+        Serial.println(ADAS.position);
         beep(error);
     }
 
@@ -566,28 +576,26 @@ void loop() {
         Things to do during flight upwards
         */
         //record sensor data
-        writeData();
+        WriteData();
         //update the ADAS position
         float height = DB.position[DB.length-1];
         float velocity = DB.vertical_velocity[DB.length-1];
         float prev_deployment = ADAS.target/ADAS_MAX_POS;  //the ratio of the previous deployment to full deployment
+        float cur_time = 0;
+        float prev_time =0;
         
-        if(DB.length == 0){
-          float cur_time = DB.ts[9];
-          float prev_time = DB.ts[8];
+        if(DB.length == 1){
+          cur_time = DB.ts[0];
+          prev_time = DB.ts[9];
+        } else{
+          cur_time = DB.ts[DB.length-1];
+          prev_time = DB.ts[DB.length-2];
         }
-        else if(DB.length == 1){
-          float cur_time = DB.ts[0];
-          float prev_time = DB.ts[9];
-        }
-        else{
-          float cur_time = DB.ts[DB.length-1];
-          float prev_time = DB.ts[DB.length-2];
-        }
+
         float time_diff = cur_time - prev_time;
-        double new_ADAS_deployment = PID(height, velocity, prev_signal, time_diff);
+        double new_ADAS_deployment = PID(height, velocity, prev_deployment, time_diff);
         //update the actual ADAS deployment
-        ADAS.target = new_ADAS_deployment*ADAS_MAX_POS;
+        ADAS.target = (int) new_ADAS_deployment*ADAS_MAX_POS;
     } else {
         /*
             Things to do while descending or on the ground
@@ -596,4 +604,110 @@ void loop() {
 
     }
     loopcount++;
+}
+
+/// PID SHIT
+
+#include "adas_pid.h"
+//constants
+float k_d = 0.1;
+float k_p = 0.9;
+float signal_to_ADAS_ratio = 0.01;  //converts between the signal units to the deployment percentage units
+
+
+//global variables
+int function_index = 1; //keep track of which function we are currently calculating with
+double prev_signal = 0;  //the cur_signal from the previous loop
+
+//functions
+int start_heights[] = {298, 396, 489, 577, 660, 738, 812, 881, 946, 1008, 1066, 1120, 1172, 1220, 1265, 1306, 1345, 1381, 1415, 1437, 1454, 1470, 1486, 1501, 1514, 1527, 1539, 1549, 1559, 1568, 1576, 1584, 1590, 1595, 1600, 1604, 1606, 1608, 1609};
+
+//double velocity_function1[] = {-1.94990816e-40, 4.31360870e-37, -4.03552040e-34, 1.97352573e-31, -4.47454183e-29, -2.79194722e-27, 4.44008811e-24, -8.45546718e-22, -1.70453995e-19, 1.32156649e-16, -3.68749797e-14, 6.40549202e-12, -7.68453997e-10, 6.56546421e-08, -4.00517292e-06, 1.71885641e-04, -5.03485211e-03, 9.61106407e-02, -1.13281432e+00, 9.28356781e+00, 3.54272273e+00};
+//double velocity_function2[] = {-6.15047837e-27, 5.70693178e-23, -2.34204648e-19, 5.58915483e-16, -8.57418948e-13, 8.81699003e-10, -6.14071341e-07, 2.85300345e-04, -8.44114066e-02, 1.42146793e+01, -8.21502738e+02};
+
+double velocity_functions[][3] = {
+  { -0.000455874984234 ,  0.216170183163 ,  176.710523811 },
+  { 1.04868657812e-05 ,  -0.124391243726 ,  238.721409985 },
+  { 7.92643542567e-06 ,  -0.121867443237 ,  238.09878419 },
+  { -2.9669386665e-05 ,  -0.0770086057444 ,  224.7201655 },
+  { -5.85983840182e-07 ,  -0.117759718173 ,  238.93759641 },
+  { -9.63650725967e-07 ,  -0.117073698461 ,  238.637791425 },
+  { -2.45244048555e-06 ,  -0.114671767 ,  237.668761566 },
+  { -4.85400385168e-06 ,  -0.110416808308 ,  235.783785956 },
+  { -9.94098238419e-06 ,  -0.100765719385 ,  231.205588252 },
+  { -1.76104026014e-05 ,  -0.0852958397462 ,  223.403682762 },
+  { -2.62789842423e-05 ,  -0.0668150640905 ,  213.5528557 },
+  { -3.59707836192e-05 ,  -0.0450937677849 ,  201.381490807 },
+  { -4.71445236453e-05 ,  -0.0189039780727 ,  186.034211748 },
+  { -6.05064680359e-05 ,  0.0136992809133 ,  166.145195871 },
+  { -7.68529722073e-05 ,  0.0550534303274 ,  139.989260124 },
+  { -9.7330441225e-05 ,  0.108575152886 ,  105.015874164 },
+  { -0.000124134067604 ,  0.18072143409 ,  56.4662923145 },
+  { -0.000160151635125 ,  0.280264534494 ,  -12.3128839095 },
+  { -0.000201442981411 ,  0.396962285167 ,  -94.7667852488 },
+  { -0.000242138394989 ,  0.513843709934 ,  -178.691181158 },
+  { -0.000288541421794 ,  0.64879502734 ,  -276.809459232 },
+  { -0.000346447983581 ,  0.819110120969 ,  -402.042870368 },
+  { -0.000419664626094 ,  1.03672808983 ,  -563.747025569 },
+  { -0.00051360798885 ,  1.3186884767 ,  -775.315703504 },
+  { -0.000636158067973 ,  1.68984862901 ,  -1056.344088 },
+  { -0.000799086511593 ,  2.18743601704 ,  -1436.25585816 },
+  { -0.00102072532098 ,  2.86954097586 ,  -1961.06016126 },
+  { -0.00133010049267 ,  3.82836671438 ,  -2703.96735091 },
+  { -0.00177503542906 ,  5.21615510456 ,  -3786.12498453 },
+  { -0.00243830432254 ,  7.29690176513 ,  -5418.00872656 },
+  { -0.0034714283374 ,  10.5546767442 ,  -7986.21589242 },
+  { -0.0051716052346 ,  15.9403897623 ,  -12251.3488201 },
+  { -0.00817502186666 ,  25.492319445 ,  -19845.9828478 },
+  { -0.0140087260584 ,  44.1087432237 ,  -34698.0960943 },
+  { -0.026961899123 ,  85.5618903791 ,  -67863.015371 },
+  { -0.0622133407046 ,  198.630881534 ,  -158530.21714 },
+  { -0.198323557315 ,  635.951816446 ,  -509807.320707 },
+  { -1.32577931543 ,  4262.63229352 ,  -3426287.93913 },
+  { -53.2846829669 ,  171488.316639 ,  -137976998.018 }};
+
+double calc_velocity(float height){
+  function_index = 0;
+  while (height > start_heights[function_index] && function_index < sizeof(start_heights)/sizeof(int)){
+    function_index++;
+  }
+  if(function_index == sizeof(start_heights)/sizeof(double)){
+    return 0; //retract fins
+  }
+  int order = sizeof(velocity_functions[function_index])/sizeof(double)-1;
+
+  double function_value = 0;
+  int index = 0;
+  while (index <= order){
+     function_value = function_value + velocity_functions[function_index][index]*pow(height,(order-index));
+     index++;
+   }
+   return function_value;
+}
+
+
+/*
+ * returns the new deployment of ADAS
+ */
+double PID(float my_height, double my_velocity, float prev_signal, float delta_t){ 
+  
+  float wanted_velocity = calc_velocity(my_height);
+  float cur_signal = (my_velocity-wanted_velocity)*signal_to_ADAS_ratio;//converted to a number between 0 and 1 ish so that its comparable to prev_signal
+  
+  
+  float deriv_signal = (cur_signal-prev_signal)/delta_t*signal_to_ADAS_ratio; //cur_sig-prev_sig is approx between 0 and 1, divided by delta t is on the order of 100-1000 so multiply by ///////////NEEED TO FIND TEH FREQUENCY TO MAKE THIS GUUUUUDD
+  //don't do integral control for now, not worth it and isn't effective
+  
+  float final_signal = (k_p * cur_signal + k_d * deriv_signal);
+  
+  float new_deployment = prev_signal + final_signal;
+  //check that the new deployment is not out of the desired range of 0 to 1
+  if(new_deployment > 1){
+    new_deployment = 1;
+  }
+  if(new_deployment < 0){
+    new_deployment = 0;
+  }
+  
+  return new_deployment;
 }
