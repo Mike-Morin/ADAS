@@ -43,6 +43,7 @@ const int  sdpin = 10; // Also known as SS.
 /* ADAS variables */
 typedef struct {
   boolean launched = false;            //Set to true when accelerometer detects launch condition.
+  unsigned long launch_time = 0;
   volatile int dir = 0;                //Current ADAS direction.
   int lastdir = -3;                     //Previous ADAS direction.
   volatile int pulse_count = 0;            //Current pulse count. Set by interrupt in ADASpulse();
@@ -56,7 +57,6 @@ typedef struct {
 } ADASstate;
 
 ADASstate ADAS;
-
 /* Data variables */
 float ADASdatabuf[16][10];
 
@@ -65,6 +65,11 @@ MPU6050 IMU;
 
 File ADASdatafile;
 
+void onLaunch() {
+  ADAS.launched = true;
+  ADAS.launch_time = millis();
+  CurieIMU.detachInterrupt();
+}
 
 void ADASWDtimeout() {
   /* Executed by main watchdog timer if it times out */
@@ -380,7 +385,6 @@ void ADASlaunchtest() {
   if (millis() - curmillis >= 60000) {
     //ADASclose();
   }
-  //}
 }
 
 
@@ -492,6 +496,7 @@ void AttachInterrupts() {
   */
   attachInterrupt(digitalPinToInterrupt(encoderpinA), ADASpulse, RISING); //Catch interrupts from the encoder.
   attachInterrupt(digitalPinToInterrupt(limitswitchpin), ADASzero, FALLING); // catch when the limit switch is disengaged
+  CurieIMU.interrupts(CURIE_IMU_SHOCK);
 }
 
 void DetachInterrupts() {
@@ -500,6 +505,7 @@ void DetachInterrupts() {
   */
   detachInterrupt(encoderpinA);
   detachInterrupt(limitswitchpin);
+  CurieIMU.noInterrupts(CURIE_IMU_SHOCK);
   // don't detach watchdog to catch failure in sd card writing
 }
 
@@ -564,11 +570,17 @@ void setup() {
   /* For the altimeter */
   MS5607alt.init();
 
+  CurieIMU.setDetectionDuration(CURIE_IMU_SHOCK, 75);
   /* For the built-in Curie IMU */
   CurieIMU.begin();
   CurieIMU.setAccelerometerRange(16);
   CurieIMU.setGyroRate(3200);
   CurieIMU.setAccelerometerRate(1600);
+
+  CurieIMU.setDetectionThreshold(CURIE_IMU_SHOCK, 8000);
+  CurieIMU.setDetectionDuration(CURIE_IMU_SHOCK, 75);
+  CurieIMU.attachInterrupt(onLaunch);
+  
   
   IMU.initialize();
   IMU.setRate(1600);
@@ -584,7 +596,8 @@ void setup() {
 
   delay(500);
 
-
+// 10 seconds after launch
+// 25 second after launch
   /* ADAS control stuff */
   pinMode(hbridgeIN1pin, OUTPUT); //hbridge IN1
   pinMode(hbridgeIN2pin, OUTPUT); //hbridge IN2
@@ -608,8 +621,14 @@ void loop() {
   //BLESerial.println("Hello, this is ADAS.");
   getData();
   writeData();
-  if (!ADAS.launched) { // why check if the rocket has lauched after it has launched?
-    isLaunch();
+  if (ADAS.launched) {
+    if (25000 > (millis() - ADAS.launch_time) > 10000 && ADAS.desiredpos == 0) {
+      ADAS.desiredpos = (int) 0.60*220;
+      ADASupdate();
+    } else if (25000>(millis() - ADAS.launch_time) && ADAS.desiredpos != 0) {
+      ADAS.desiredpos = 0;
+      ADASupdate();
+    }
   }
 //  ADASupdate();
 //  ADASlaunchtest();
