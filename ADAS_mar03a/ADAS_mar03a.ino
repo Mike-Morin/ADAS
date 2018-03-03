@@ -5,7 +5,7 @@
 #include <SD.h>
 #include <Wire.h>
 #include <CurieIMU.h>
-#include <MadgwickAHRS.h> // Magic IMU positioning angle library
+#include "MadgwickAHRS.h" // Magic IMU positioning angle library
 #include <math.h> // MATH
 #include "MPU6050.h" // External, nicer altimeter used as the data source
 
