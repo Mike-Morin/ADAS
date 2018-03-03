@@ -190,9 +190,9 @@ private:
         return AltCm;	
     }
 
-    void readyAdc() {
+    void readyAdc(const uint8_t cmd) {
     	Wire.beginTransmission(i2cAddr_);
-	Wire.write(cmdAdcConv_);
+	Wire.write(cmdAdcConv_ | cmd);
 	Wire.endTransmission();
 	ready_ts = millis();
     }
@@ -200,7 +200,7 @@ private:
     int32_t ReadAdc(const uint8_t cmd)
     {             
 	if (ready_ts == 0) {
-		readyAdc();
+		readyAdc(cmd);
 	}
 	int ready_delay;
         // wait necessary conversion time
