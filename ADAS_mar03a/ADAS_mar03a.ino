@@ -1,5 +1,3 @@
-#include "BLESerial.h"
-
 #include "MS5607/IntersemaBaro.h"
 
 #include <CurieTimerOne.h>
@@ -7,7 +5,10 @@
 #include <SD.h>
 #include <Wire.h>
 #include <CurieIMU.h>
-//#include <CurieBLE.h>
+#include <MadgwickAHRS.h> // Magic IMU positioning angle library
+#include <math.h> // MATH
+#include "MPU6050.h" // External, nicer altimeter used as the data source
+
 
 #define ADAS_ERROR 5 //Allowed error in ADAS motion due to overshoot. (encoder pulses) 
 #define ADAS_SLOW_THRESH 10 // Number of pulses away from target at which ADAS slows down. (encoder pulses)
@@ -16,6 +17,11 @@
 #define ADAS_PWM_FREQ 150 // PWM frequency for slow condition. (#/255)
 #define LAUNCH_THRESHOLD_TIME 200 //(ms)
 #define LAUNCH_THRESHOLD_ACC 4 //(g)
+
+const int DATABUFFER_LENGTH = 10;
+
+const int IMU_SAMPLE_RATE = 3200; // (hz)
+const int IMU_ACCEL_RANGE = 16; // (g)
 
 #define WDUS 1000000 //Number of microseconds until watchdog times out and e-stops ADAS. (1000000us = 1s)
 
@@ -51,16 +57,103 @@ typedef struct {
   int error = -99;
   boolean emergencystop = false;
   boolean jerk = true;
+    bool descending = false;
 } ADASstate;
 
 ADASstate ADAS;
 
+typedef struct {
+    unsigned long ts; // time stamp
+    float OB_accel[3]; // on board accelerometer
+    float OB_gyro[3]; // on board gyroscope
+    int16_t EX_accel[3]; // external (of board) accelerometer (MPU6050) (mg/s)
+    int16_t EX_gyro[3]; // external (of board) gyroscope (MPU6050)  (mg/s)
+    float angle[3];
+    float velocity;
+    float position;
+    float vertical_velocity;
+    float altimeter;
+    float temperature;
+    bool launched;
+    bool descending;
+    int adas_target;
+    int adas_position;
+} dataframe;
+
 /* Data variables */
-float ADASdatabuf[16][10];
+
+dataframe databuffer[DATABUFFER_LENGTH];
+int current_index = 0;
 
 Intersema::BaroPressure_MS5607B MS5607alt(true);
 
+MPU6050 IMU;
+Madgwick filter;
+
 File ADASdatafile;
+
+void AttachInterrupts(){
+	attachInterrupt(digitalPinToInterrupt(encoderpinA), ADASpulse, RISING); //Catch interrupts from the encoder.
+	attachInterrupt(digitalPinToInterrupt(limitswitchpin), ADASzero, FALLING); // catch when the limit switch is disengaged
+
+	if (!ADAS.launched) {
+        if (CurieIMU.getInterruptStatus(CURIE_IMU_SHOCK)) {
+            onLaunch();
+        } else {
+            CurieIMU.attachInterrupt(onLaunch);
+        }
+    } else if (ADAS.launched && !ADAS.descending) {
+        if (CurieIMU.getInterruptStatus(CURIE_IMU_FREEFALL)) {
+            onApogee();
+        } else {
+            CurieIMU.attachInterrupt(onApogee);
+        }
+    }
+}
+
+void DetachInterrupts() {
+    detachInterrupt(encoderpinA);
+    detachInterrupt(limitswitchpin);
+    CurieIMU.detachInterrupt();
+}
+
+float convertRawAcceleration(int aRaw) {
+  // since we are using 2G range
+  // -2g maps to a raw value of -32768
+  // +2g maps to a raw value of 32767
+
+  float a = (aRaw * 2.0) / 32768.0;
+  return a;
+}
+
+float convertRawGyro(int gRaw) {
+  // since we are using 250 degrees/seconds range
+  // -250 maps to a raw value of -32768
+  // +250 maps to a raw value of 32767
+
+  float g = (gRaw * 250.0) / 32768.0;
+  return g;
+}
+
+void onLaunch() {
+    if (!ADAS.launched) {
+        ADAS.launched = true;
+        // remove launch interrupt
+        CurieIMU.detachInterrupt();
+        CurieIMU.noInterrupts(CURIE_IMU_SHOCK);
+        // add apogee interrupt
+        CurieIMU.interrupts(CURIE_IMU_FREEFALL);
+        CurieIMU.attachInterrupt(onApogee);
+    }
+}
+
+void onApogee() {
+    if (!ADAS.descending) {
+        ADAS.descending = true;
+        ADAS.desiredpos = 0; // retract aerobreak for safe landings
+    	CurieIMU.detachInterrupt();
+    }
+}
 
 
 void ADASWDtimeout() {
@@ -232,97 +325,100 @@ void ADASupdate() {
 }
 
 
-void isLaunch() {
-  /*
-    Launch detection code. If the total acceleration on the system
-    is above LAUNCH_THRESHOLD_ACC for a continuous LAUNCH_THRESHOLD_TIME,
-    the ADAS.launched flag is set.
-  */
 
-  boolean nolaunch = false;
-  static unsigned int lastmillis = 0;
-  if (millis() - lastmillis > LAUNCH_THRESHOLD_TIME) {
-    lastmillis = millis();
-    for (int i = 0; i < 10 && !nolaunch; i++) {
-      if ((sqrt(pow(ADASdatabuf[1][i], 2) + pow(ADASdatabuf[2][i], 2) + pow(ADASdatabuf[3][i], 2))) < LAUNCH_THRESHOLD_ACC) {
-        Serial.println(sqrt(pow(ADASdatabuf[1][i], 2) + pow(ADASdatabuf[2][i], 2) + pow(ADASdatabuf[3][i], 2)));
-        nolaunch = true;
-      }
-    }
 
-    if (!nolaunch) {
-      ADAS.launched = true;
+
+void log_data() {
+
+    dataframe current_frame;
+
+    current_frame.ts = millis();
+    current_frame.altimeter = MS5607alt.getHeightCentiMeters(); // TODO: scale to meters??
+    CurieIMU.readAccelerometerScaled(
+       current_frame.OB_accel[0],
+       current_frame.OB_accel[1],
+       current_frame.OB_accel[2]
+    );
+    CurieIMU.readGyroScaled(
+        current_frame.OB_gyro[0],
+        current_frame.OB_gyro[1],
+        current_frame.OB_gyro[2]
+    );
+
+    IMU.getMotion6(
+        &current_frame.EX_accel[0],
+        &current_frame.EX_accel[1],
+        &current_frame.EX_accel[2],
+        &current_frame.EX_gyro[0],
+        &current_frame.EX_gyro[1],
+        &current_frame.EX_gyro[2]
+    );
+
+    filter.updateIMU(
+        convertRawAcceleration(current_frame.EX_accel[0]),
+        convertRawAcceleration(current_frame.EX_accel[1]),
+        convertRawAcceleration(current_frame.EX_accel[2]),
+        convertRawGyro(current_frame.EX_gyro[0]),
+        convertRawGyro(current_frame.EX_gyro[1]),
+        convertRawGyro(current_frame.EX_gyro[2])
+    );
+
+    
+
+    current_frame.angle[0] = filter.getPitch();
+    current_frame.angle[1] = filter.getRoll();
+    current_frame.angle[2] = filter.getYaw();
+
+    current_frame.velocity = getVelocity();
+
+    current_frame.temperature = (CurieIMU.readTemerature()/512.0)+23;
+
+    databuffer[current_index] = current_frame;
+    current_index++;
+    if (current_index == DATABUFFER_LENGTH) {
+        current_index = 0;
     }
-  }
 }
 
+void write_data() {
+    File datafile = open("ADAS_DATA.txt", FILE_WRITE);
 
-void getData() {
-  /*
-    Polls all the sensors and puts the data in the ADASdatabuf.
-    The acclerometer gets polled 10 times for every altimeter
-    reading because the altimeter is very slow (fix!?).
-  */
-
-  for (int i = 0; i < 10; i++) { //The acclerometer is polled 10 times.
-    ADASdatabuf[0][i] = micros();
-
-    CurieIMU.readAccelerometerScaled(ADASdatabuf[1][i], ADASdatabuf[2][i], ADASdatabuf[3][i]);
-    CurieIMU.readGyroScaled(ADASdatabuf[4][i], ADASdatabuf[5][i], ADASdatabuf[6][i]);
-    ADASdatabuf[7][i] = (CurieIMU.readTemperature() / 512.0 + 23);
-
-    if (i == 0) { // The altimeter is polled once.
-      ADASdatabuf[8][i] = MS5607alt.getHeightCentiMeters();
+    if (datafile) {
+        for (int i=0; i<DATABUFFER_LENGTH; i++){
+            dataframe current_frame = databuffer[i];
+            char buffer[256];
+            sprintf(buffer, 
+                "%xl,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%i,%i,%i",
+                current_frame.ts,
+                current_frame.OB_accel[0],
+                current_frame.OB_accel[1],
+                current_frame.OB_accel[2],
+                current_frame.OB_gyro[0],
+                current_frame.OB_gyro[1],
+                current_frame.OB_gyro[2],
+                current_frame.EX_accel[0],
+                current_frame.EX_accel[1],
+                current_frame.EX_accel[2],
+                current_frame.EX_gryo[0],
+                current_frame.EX_gryo[1],
+                current_frame.EX_gryo[2],
+                current_frame.angle[0],
+                current_frame.angle[1],
+                current_frame.angle[2],
+                current_frame.velocity,
+                current_frame.altimeter,
+                current_frame.temperature,
+                current_frame.launched,
+                current_frame.descending,
+                current_frame.adas_target,
+                current_frame.adas_position
+            );
+            datafile.write(buffer);
+        }
+        datafile.close();
     } else {
-      ADASdatabuf[8][i] = ADASdatabuf[8][i - 1];
+        datafile.close(); // can never be too careful
     }
-  }
-}
-
-
-void writeData() {
-  /*
-    Writes all the sensor data to SD card
-  */
-
-  // TODO: this could probably be simplified and/or be made faster by preformatting the string that is pushed to the sd card
-
-  /* Interrupts must be disabled or the SD card
-     will be corrupted upon write. The watchdog
-     is still enabled to stop ADAS if the the SD
-     write locks up.
-  */
-  detachInterrupt(encoderpinA);
-  detachInterrupt(limitswitchpin);
-
-  ADASdatafile = SD.open("ADASdata.txt", FILE_WRITE);
-
-  if (ADASdatafile) {
-    for (int j = 0; j < 10; j++) { //10 blocks of
-      for (int i = 0; i < 9; i++) { //9 sensor outputs
-        ADASdatafile.print(ADASdatabuf[i][j]);
-        ADASdatafile.print("\t");
-      }
-      ADASdatafile.print("\t");
-      ADASdatafile.print(ADAS.launched);
-      ADASdatafile.print("\t");
-      ADASdatafile.print(ADAS.pulsect);
-      ADASdatafile.print("\t");
-      ADASdatafile.print(ADAS.desiredpos);
-      ADASdatafile.print("\t");
-      ADASdatafile.print(ADAS.dir);
-      ADASdatafile.print("\n");
-    }
-    ADASdatafile.close();
-  } else {
-    // if the file didn't open, print an error:
-    // NOTE: this doesnt do much in the air
-    Serial.println("error opening test.txt");
-    ADAS.error = -9;
-    ADASbeep(-9);
-  }
-  attachInterrupt(digitalPinToInterrupt(encoderpinA), ADASpulse, RISING); //Catch interrupts from the encoder.
-  attachInterrupt(digitalPinToInterrupt(limitswitchpin), ADASzero, FALLING); // catch when the limit switch is disengaged
 }
 
 
@@ -460,10 +556,15 @@ int ADASselftest() {
 }
 
 void setup() {
-  BLESerial.setName("ADAS");
-  BLESerial.begin();
-
+	
   Serial.begin(9600);
+  
+    /* ADAS control stuff */
+  pinMode(hbridgeIN1pin, OUTPUT); //hbridge IN1
+  pinMode(hbridgeIN2pin, OUTPUT); //hbridge IN2
+  pinMode(hbridgeENpin, OUTPUT); //hbridge EN pin for pwm
+  pinMode(encoderpinA, INPUT); //encoder A (or B... either works).
+  pinMode(limitswitchpin, INPUT);
 
   /* For the altimeter */
   MS5607alt.init();
@@ -473,7 +574,21 @@ void setup() {
   CurieIMU.setAccelerometerRange(16);
   CurieIMU.setGyroRate(3200);
   CurieIMU.setAccelerometerRate(1600);
+  
+  CurieIMU.setDetectionThreshold(CURIE_IMU_SHOCK, 9.81*LAUNCH_THRESHOLD_ACC*1000); // amount that counts as a launch
+  CurieIMU.setDetectionDuration(CURIE_IMU_SHOCK, 75); // constant upwards acceleration for at least 75 ms (max)
+  CurieIMU.setDetectionThreshold(CURIE_IMU_FREEFALL, 3.91);
 
+  // configure better, external imu
+  IMU.initialize();
+  IMU.setRate(IMU_UPDATE_RATE);
+  
+  filter.begin(IMU_UPDATE_RATE);
+  
+  // configure micros per reading and previous micros
+	microsPerReading = 1000000/IMU_UPDATE_RATE;
+	microsPrevious = micros();
+    
   while (!SD.begin(sdpin)) { //Stop everything if we cant see the SD card!
     Serial.println("Card failed or not present.");
     ADASbeep(-1);
@@ -483,18 +598,9 @@ void setup() {
   Serial.println("Card OK");
   ADASbeep(1);
 
-  delay(500);
 
 
-  /* ADAS control stuff */
-  pinMode(hbridgeIN1pin, OUTPUT); //hbridge IN1
-  pinMode(hbridgeIN2pin, OUTPUT); //hbridge IN2
-  pinMode(hbridgeENpin, OUTPUT); //hbridge EN pin for pwm
-  pinMode(encoderpinA, INPUT); //encoder A (or B... either works).
-  pinMode(limitswitchpin, INPUT);
 
-  attachInterrupt(digitalPinToInterrupt(encoderpinA), ADASpulse, RISING); //Catch interrupts from the encoder.
-  attachInterrupt(digitalPinToInterrupt(limitswitchpin), ADASzero, FALLING); // catch when the limit switch is disengaged
 
 
   /* Run self-test until pass. */
@@ -508,12 +614,8 @@ void setup() {
 
 void loop() {
   CurieTimerOne.restart(WDUS); //Restarts watchdog timer.
-  BLESerial.println("Hello, this is ADAS.");
-  getData();
-  writeData();
-  if (!ADAS.launched) { // why check if the rocket has lauched after it has launched?
-    isLaunch();
-  }
+  log_data();
+  write_data();
   ADASupdate();
   ADASlaunchtest();
   Serial.println(ADAS.launched);
