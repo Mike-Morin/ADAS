@@ -10,7 +10,7 @@
 #include "MPU6050.h" // External, nicer altimeter used as the data source
 
 
-#define ADAS_ERROR 5 //Allowed error in ADAS motion due to overshoot. (encoder pulses) 
+#define ADAS_ERROR 5 //Allowed error in ADAS motion due to overshoot. (encoder pulses)
 #define ADAS_SLOW_THRESH 10 // Number of pulses away from target at which ADAS slows down. (encoder pulses)
 #define ADAS_MAX_JERK_TIME 100 // Amount of time ADAS slowing is to be applied before jerk condition is cleared. (milliseconds)
 #define ADAS_MAX_DEPLOY 220 // Max number of ADAS pulses--this is where the fins disengage.(encoder pulses)
@@ -313,7 +313,7 @@ void ADASupdate() {
     ADAS.lastdir = ADAS.dir;
     if (ADAS.pulsect >= (ADAS.desiredpos - ADAS_SLOW_THRESH)) { //slow when approaching target
       ADAS.slow = true;
-      
+
     }
   } else if (ADAS.pulsect >= (ADAS.desiredpos + ADAS_ERROR)) { // Need to go reverse to achieve target pos.
     ADAS.dir = -1;
@@ -331,6 +331,12 @@ void ADASupdate() {
 void log_data() {
 
     dataframe current_frame;
+    int last_index;
+    if (current_index==0) {
+      last_index = DATABUFFER_LENGTH-1;
+    } else {
+      last_index = current_index-1;
+    }
 
     current_frame.ts = millis();
     current_frame.altimeter = MS5607alt.getHeightCentiMeters(); // TODO: scale to meters??
@@ -363,13 +369,16 @@ void log_data() {
         convertRawGyro(current_frame.EX_gyro[2])
     );
 
-    
+
 
     current_frame.angle[0] = filter.getPitch();
     current_frame.angle[1] = filter.getRoll();
     current_frame.angle[2] = filter.getYaw();
 
-    current_frame.velocity = getVelocity();
+    float vertical_acc = (sin(filter.getPitch())*convertRawAcceleration(current_frame.EX_accel[0])) * 9.81;
+    float delta_t = current_frame.ts - databuffer[last_index].ts;
+
+    current_frame.velocity = databuffer[last_index].velocity + (vertical_acc*delta_t));
 
     current_frame.temperature = (CurieIMU.readTemerature()/512.0)+23;
 
@@ -387,7 +396,7 @@ void write_data() {
         for (int i=0; i<DATABUFFER_LENGTH; i++){
             dataframe current_frame = databuffer[i];
             char buffer[256];
-            sprintf(buffer, 
+            sprintf(buffer,
                 "%xl,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%i,%i,%i",
                 current_frame.ts,
                 current_frame.OB_accel[0],
@@ -556,9 +565,9 @@ int ADASselftest() {
 }
 
 void setup() {
-	
+
   Serial.begin(9600);
-  
+
     /* ADAS control stuff */
   pinMode(hbridgeIN1pin, OUTPUT); //hbridge IN1
   pinMode(hbridgeIN2pin, OUTPUT); //hbridge IN2
@@ -574,7 +583,7 @@ void setup() {
   CurieIMU.setAccelerometerRange(16);
   CurieIMU.setGyroRate(3200);
   CurieIMU.setAccelerometerRate(1600);
-  
+
   CurieIMU.setDetectionThreshold(CURIE_IMU_SHOCK, 9.81*LAUNCH_THRESHOLD_ACC*1000); // amount that counts as a launch
   CurieIMU.setDetectionDuration(CURIE_IMU_SHOCK, 75); // constant upwards acceleration for at least 75 ms (max)
   CurieIMU.setDetectionThreshold(CURIE_IMU_FREEFALL, 3.91);
@@ -582,13 +591,13 @@ void setup() {
   // configure better, external imu
   IMU.initialize();
   IMU.setRate(IMU_UPDATE_RATE);
-  
+
   filter.begin(IMU_UPDATE_RATE);
-  
+
   // configure micros per reading and previous micros
 	microsPerReading = 1000000/IMU_UPDATE_RATE;
 	microsPrevious = micros();
-    
+
   while (!SD.begin(sdpin)) { //Stop everything if we cant see the SD card!
     Serial.println("Card failed or not present.");
     ADASbeep(-1);
