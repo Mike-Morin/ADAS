@@ -7,6 +7,8 @@
 #include <SD.h>
 #include <Wire.h>
 #include <CurieIMU.h>
+#include "MPU6050.h"
+
 //#include <CurieBLE.h>
 
 #define ADAS_ERROR 2 //Allowed error in ADAS motion due to overshoot. (encoder pulses) 
@@ -59,6 +61,7 @@ ADASstate ADAS;
 float ADASdatabuf[16][10];
 
 Intersema::BaroPressure_MS5607B MS5607alt(true);
+MPU6050 IMU;
 
 File ADASdatafile;
 
@@ -250,6 +253,23 @@ void isLaunch() {
   }
 }
 
+float convertRawGyro(int gRaw) {
+  // since we are using 250 degrees/seconds range
+  // -250 maps to a raw value of -32768
+  // +250 maps to a raw value of 32767
+
+  float g = (gRaw * 250.0) / 32768.0;
+  return g;
+}
+
+float convertRawAcceleration(int aRaw) {
+  // since we are using 2G range
+  // -2g maps to a raw value of -32768
+  // +2g maps to a raw value of 32767
+
+  float a = (aRaw * 2.0) / 32768.0;
+  return a;
+}
 
 void getData() {
   /*
@@ -263,12 +283,26 @@ void getData() {
 
     CurieIMU.readAccelerometerScaled(ADASdatabuf[1][i], ADASdatabuf[2][i], ADASdatabuf[3][i]);
     CurieIMU.readGyroScaled(ADASdatabuf[4][i], ADASdatabuf[5][i], ADASdatabuf[6][i]);
-    ADASdatabuf[7][i] = (CurieIMU.readTemperature() / 512.0 + 23);
+    int16_t ax, ay, az, gx, gy, gz;
+    IMU.getMotion6(&ax,
+                   &ay,
+                   &az,
+                   &gx,
+                   &gy,
+                   &gz);
+    ADASdatabuf[7][i] = convertRawAcceleration(ax);
+    ADASdatabuf[8][i] = convertRawAcceleration(ay);
+    ADASdatabuf[9][i] = convertRawAcceleration(az);
+    ADASdatabuf[10][i] = convertRawGyro(gx);
+    ADASdatabuf[11][i] = convertRawGyro(gy);
+    ADASdatabuf[12][i] = convertRawGyro(gz);
+
+    ADASdatabuf[13][i] = (CurieIMU.readTemperature() / 512.0 + 23);
 
     if (i == 0) { // The altimeter is polled once.
-      ADASdatabuf[8][i] = MS5607alt.getHeightCentiMeters();
+      ADASdatabuf[14][i] = MS5607alt.getHeightCentiMeters();
     } else {
-      ADASdatabuf[8][i] = ADASdatabuf[8][i - 1];
+      ADASdatabuf[14][i] = ADASdatabuf[14][i - 1];
     }
   }
 }
@@ -291,17 +325,17 @@ void writeData() {
 
   if (ADASdatafile) {
     for (int j = 0; j < 10; j++) { //10 blocks of
-      for (int i = 0; i < 9; i++) { //9 sensor outputs
+      for (int i = 0; i < 15; i++) { //9 sensor outputs
         ADASdatafile.print(ADASdatabuf[i][j]);
-        ADASdatafile.print("\t");
+        ADASdatafile.print(",");
       }
-      ADASdatafile.print("\t");
+      ADASdatafile.print(",");
       ADASdatafile.print(ADAS.launched);
-      ADASdatafile.print("\t");
+      ADASdatafile.print(",");
       ADASdatafile.print(ADAS.pulse_count);
-      ADASdatafile.print("\t");
+      ADASdatafile.print(",");
       ADASdatafile.print(ADAS.desiredpos);
-      ADASdatafile.print("\t");
+      ADASdatafile.print(",");
       ADASdatafile.print(ADAS.dir);
       ADASdatafile.print("\n");
     }
@@ -535,6 +569,9 @@ void setup() {
   CurieIMU.setAccelerometerRange(16);
   CurieIMU.setGyroRate(3200);
   CurieIMU.setAccelerometerRate(1600);
+  
+  IMU.initialize();
+  IMU.setRate(1600);
 
   while (!SD.begin(sdpin)) { //Stop everything if we cant see the SD card!
     Serial.println("Card failed or not present.");
@@ -558,25 +595,25 @@ void setup() {
   AttachInterrupts();
 
   /* Run self-test until pass. */
-  while (ADAS.error != 0) {
-    ADASbeep(ADASselftest());
-  }
+//  while (ADAS.error != 0) {
+//    ADASbeep(ADASselftest());
+//  }
 
-  CurieTimerOne.start(WDUS, &ADASWDtimeout); //Starts watchdog timer.
+  //CurieTimerOne.start(WDUS, &ADASWDtimeout); //Starts watchdog timer.
 }
 
 
 void loop() {
-  CurieTimerOne.restart(WDUS); //Restarts watchdog timer.
+  //CurieTimerOne.restart(WDUS); //Restarts watchdog timer.
   //BLESerial.println("Hello, this is ADAS.");
   getData();
   writeData();
   if (!ADAS.launched) { // why check if the rocket has lauched after it has launched?
     isLaunch();
   }
-  ADASupdate();
-  ADASlaunchtest();
-  Serial.println(ADAS.launched);
-  Serial.println(ADAS.error);
+//  ADASupdate();
+//  ADASlaunchtest();
+//  Serial.println(ADAS.launched);
+//  Serial.println(ADAS.error);
 }
 

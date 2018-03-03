@@ -85,14 +85,15 @@ typedef struct {
 
 /* Data variables */
 
+dataframe last_frame;
 dataframe databuffer[DATABUFFER_LENGTH];
-int current_index = 0;
 
 Intersema::BaroPressure_MS5607B MS5607alt(true);
 
 MPU6050 IMU;
 Madgwick filter;
 
+File datafile;
 
 void AttachInterrupts(){
 	attachInterrupt(digitalPinToInterrupt(encoderpinA), ADASpulse, RISING); //Catch interrupts from the encoder.
@@ -330,15 +331,9 @@ void ADASupdate() {
 
 
 
-void log_data() {
+dataframe log_data() {
 
     dataframe current_frame;
-    int last_index;
-    if (current_index==0) {
-      last_index = DATABUFFER_LENGTH-1;
-    } else {
-      last_index = current_index-1;
-    }
 
     current_frame.ts = millis();
     current_frame.altimeter = 0; //MS5607alt.getHeightCentiMeters(); // TODO: scale to meters??
@@ -378,33 +373,23 @@ void log_data() {
     current_frame.angle[2] = filter.getYaw();
 
     float vertical_acc = (sin(filter.getPitch())*convertRawAcceleration(current_frame.EX_accel[0])) * 9.81;
-    float delta_t = current_frame.ts - databuffer[last_index].ts;
+    float delta_t = current_frame.ts - last_frame.ts;
 
-    current_frame.velocity = databuffer[last_index].velocity + (vertical_acc*delta_t);
+    current_frame.velocity = last_frame.velocity + (vertical_acc*delta_t);
 
     current_frame.temperature = (CurieIMU.readTemperature()/512.0)+23;
 
-    databuffer[current_index] = current_frame;
-    current_index++;
-    if (current_index == DATABUFFER_LENGTH) {
-        current_index = 0;
-    }
+    return current_frame;
 }
 
 void write_data() {
-    File datafile = SD.open("ADAS_DATA.txt", FILE_WRITE);
+        datafile = SD.open("ADAS_DATA.txt", FILE_WRITE);
 
-    if (datafile) {
-        for (int i=0; i<DATABUFFER_LENGTH; i++){
-            dataframe current_frame = databuffer[i];
-            String out_buffer = String(256);
-            out_buffer += String(current_frame.ts);
-            datafile.println(out_buffer);
-        }
+        dataframe current_frame = databuffer[0];
+        datafile.println("hello world");
+        //datafile.println(current_frame.ts);
+        
         datafile.close();
-    } else {
-        datafile.close(); // can never be too careful
-    }
 }
 
 
@@ -442,7 +427,7 @@ void ADASlaunchtest() {
 }
 
 
-//int ADASselftest() {
+int ADASselftest() {
   /*
     Checks the fins for proper behavior and
     verifies that h-bridge and motor
@@ -450,7 +435,7 @@ void ADASlaunchtest() {
     SD card write and read test. Returns 0 if
     everything is OK. A negative if not so.
   */
- /* int lastpulsect = ADAS.pulsect;
+  int lastpulsect = ADAS.pulsect;
 
   for ( int i = 0; i < 100 && lastpulsect == ADAS.pulsect; i++) {
     digitalWrite(hbridgeENpin, HIGH);
@@ -526,11 +511,11 @@ void ADASlaunchtest() {
   File ADAStestfile;
   ADAStestfile = SD.open("ADAStestfile.txt", FILE_WRITE);
   ADAStestfile.println(ADASteststring);
-  ADASdatafile.close();
+  ADAStestfile.close();
 
   ADAStestfile = SD.open("ADAStestfile.txt");
   char readtestbuf[11];
-  for (int i = 0; i < 11 && ADASdatafile.available(); i++) {
+  for (int i = 0; i < 11 && ADAStestfile.available(); i++) {
     if (ADAStestfile.read() != ADASteststring[i]) {
       ADAS.error = -9;  //File read/write error.
       return ADAS.error;
@@ -539,7 +524,7 @@ void ADASlaunchtest() {
   ADAStestfile.close();
   ADAS.error = 0;
   return ADAS.error; // All tests passed.
-}*/
+}
 
 
 unsigned long microsPerReading, microsPrevious; // number of micros per reading that are required and the micros of the previous reading
@@ -584,27 +569,22 @@ void setup() {
     delay(1000);
   }
 
-  Serial.println("Card OK");
-  ADASbeep(1);
-
-
-
-
-
-
-  /* Run self-test until pass. */
-/*  while (ADAS.error != 0) {
-    ADASbeep(ADASselftest());
-  }*/
-
-  CurieTimerOne.start(WDUS, &ADASWDtimeout); //Starts watchdog timer.
-  log_data();
-  write_data();
+  File testfile = SD.open("testfile", FILE_WRITE);
+  testfile.println("what the actual fuck");
+  testfile.close();
+  
+  //CurieTimerOne.start(WDUS, &ADASWDtimeout); //Starts watchdog timer.
+  for (int i=0;i<10;i++)  {
+    databuffer[0] = log_data();
+    last_frame = databuffer[0];
+    write_data();
+  }
+  ADASbeep(20);
 }
 
 
 void loop() {
-  CurieTimerOne.restart(WDUS); //Restarts watchdog timer.
+  //CurieTimerOne.restart(WDUS); //Restarts watchdog timer.
 
   //ADASupdate();
   //ADASlaunchtest();
