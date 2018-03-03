@@ -76,7 +76,7 @@ protected:
         }
     }
     
-    static const uint8_t NUM_SAMP_FOR_AVG = 4;
+    static const uint8_t NUM_SAMP_FOR_AVG = 1;
 
     unsigned int coefficients_[6];
 };
