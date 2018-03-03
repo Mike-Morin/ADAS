@@ -23,6 +23,9 @@ const int DATABUFFER_LENGTH = 10;
 const int IMU_SAMPLE_RATE = 3200; // (hz)
 const int IMU_ACCEL_RANGE = 16; // (g)
 
+const int IMU_UPDATE_RATE = 25; // (hz) number of times the imu is read per second
+
+
 #define WDUS 1000000 //Number of microseconds until watchdog times out and e-stops ADAS. (1000000us = 1s)
 
 /* Pin defs */
@@ -339,7 +342,7 @@ void log_data() {
     }
 
     current_frame.ts = millis();
-    current_frame.altimeter = MS5607alt.getHeightCentiMeters(); // TODO: scale to meters??
+    current_frame.altimeter = 0; //MS5607alt.getHeightCentiMeters(); // TODO: scale to meters??
     CurieIMU.readAccelerometerScaled(
        current_frame.OB_accel[0],
        current_frame.OB_accel[1],
@@ -378,9 +381,9 @@ void log_data() {
     float vertical_acc = (sin(filter.getPitch())*convertRawAcceleration(current_frame.EX_accel[0])) * 9.81;
     float delta_t = current_frame.ts - databuffer[last_index].ts;
 
-    current_frame.velocity = databuffer[last_index].velocity + (vertical_acc*delta_t));
+    current_frame.velocity = databuffer[last_index].velocity + (vertical_acc*delta_t);
 
-    current_frame.temperature = (CurieIMU.readTemerature()/512.0)+23;
+    current_frame.temperature = (CurieIMU.readTemperature()/512.0)+23;
 
     databuffer[current_index] = current_frame;
     current_index++;
@@ -390,39 +393,14 @@ void log_data() {
 }
 
 void write_data() {
-    File datafile = open("ADAS_DATA.txt", FILE_WRITE);
+    File datafile = SD.open("ADAS_DATA.txt", FILE_WRITE);
 
     if (datafile) {
         for (int i=0; i<DATABUFFER_LENGTH; i++){
             dataframe current_frame = databuffer[i];
-            char buffer[256];
-            sprintf(buffer,
-                "%xl,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%i,%i,%i",
-                current_frame.ts,
-                current_frame.OB_accel[0],
-                current_frame.OB_accel[1],
-                current_frame.OB_accel[2],
-                current_frame.OB_gyro[0],
-                current_frame.OB_gyro[1],
-                current_frame.OB_gyro[2],
-                current_frame.EX_accel[0],
-                current_frame.EX_accel[1],
-                current_frame.EX_accel[2],
-                current_frame.EX_gryo[0],
-                current_frame.EX_gryo[1],
-                current_frame.EX_gryo[2],
-                current_frame.angle[0],
-                current_frame.angle[1],
-                current_frame.angle[2],
-                current_frame.velocity,
-                current_frame.altimeter,
-                current_frame.temperature,
-                current_frame.launched,
-                current_frame.descending,
-                current_frame.adas_target,
-                current_frame.adas_position
-            );
-            datafile.write(buffer);
+            String out_buffer = String(256);
+            out_buffer += String(current_frame.ts);
+            char charbuf[256];
         }
         datafile.close();
     } else {
@@ -564,6 +542,9 @@ int ADASselftest() {
   return ADAS.error; // All tests passed.
 }
 
+
+unsigned long microsPerReading, microsPrevious; // number of micros per reading that are required and the micros of the previous reading
+
 void setup() {
 
   Serial.begin(9600);
@@ -613,22 +594,23 @@ void setup() {
 
 
   /* Run self-test until pass. */
-  while (ADAS.error != 0) {
+/*  while (ADAS.error != 0) {
     ADASbeep(ADASselftest());
-  }
+  }*/
 
   CurieTimerOne.start(WDUS, &ADASWDtimeout); //Starts watchdog timer.
+  log_data();
+  write_data();
 }
 
 
 void loop() {
   CurieTimerOne.restart(WDUS); //Restarts watchdog timer.
-  log_data();
-  write_data();
-  ADASupdate();
-  ADASlaunchtest();
-  Serial.println(ADAS.launched);
-  Serial.println(ADAS.error);
+
+  //ADASupdate();
+  //ADASlaunchtest();
+  //Serial.println(ADAS.launched);
+  //Serial.println(ADAS.error);
 
 
 }
