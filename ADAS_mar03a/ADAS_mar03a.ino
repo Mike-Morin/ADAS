@@ -9,11 +9,11 @@
 #include <CurieIMU.h>
 //#include <CurieBLE.h>
 
-#define ADAS_ERROR 2 //Allowed error in ADAS motion due to overshoot. (encoder pulses) 
+#define ADAS_ERROR 5 //Allowed error in ADAS motion due to overshoot. (encoder pulses) 
 #define ADAS_SLOW_THRESH 10 // Number of pulses away from target at which ADAS slows down. (encoder pulses)
-#define ADAS_MAX_JERK_TIME 500 // Amount of time ADAS slowing is to be applied before jerk condition is cleared. (milliseconds)
+#define ADAS_MAX_JERK_TIME 100 // Amount of time ADAS slowing is to be applied before jerk condition is cleared. (milliseconds)
 #define ADAS_MAX_DEPLOY 220 // Max number of ADAS pulses--this is where the fins disengage.(encoder pulses)
-#define ADAS_PWM_FREQ 75 // PWM frequency for slow condition. (#/255)
+#define ADAS_PWM_FREQ 150 // PWM frequency for slow condition. (#/255)
 #define LAUNCH_THRESHOLD_TIME 200 //(ms)
 #define LAUNCH_THRESHOLD_ACC 4 //(g)
 
@@ -168,7 +168,6 @@ void ADASmove() {
   /*
     Actually moves the ADAS motor according to ADAS.desiredpos and ADAS.pulsect.
   */
-  static unsigned int lastmillis = 0;
   if (ADAS.emergencystop) {
     digitalWrite(hbridgeIN1pin, HIGH);
     digitalWrite(hbridgeIN2pin, HIGH);
@@ -205,7 +204,7 @@ void ADASupdate() {
 
   ADASmove(); //ADAS won't move unless ADASmove() is called here.
 
-  if (ADAS.lastdir != ADAS.dir) { //Prevents sudden changes by setting slow flag.
+  if (ADAS.lastdir != ADAS.dir && ADAS.jerk == false) { //Prevents sudden changes by setting slow flag.
     ADAS.jerk = true;
     ADAS.slow = true;
     lastjerk =  millis();
@@ -221,6 +220,7 @@ void ADASupdate() {
     ADAS.lastdir = ADAS.dir;
     if (ADAS.pulsect >= (ADAS.desiredpos - ADAS_SLOW_THRESH)) { //slow when approaching target
       ADAS.slow = true;
+      
     }
   } else if (ADAS.pulsect >= (ADAS.desiredpos + ADAS_ERROR)) { // Need to go reverse to achieve target pos.
     ADAS.dir = -1;
@@ -368,9 +368,9 @@ int ADASselftest() {
     SD card write and read test. Returns 0 if
     everything is OK. A negative if not so.
   */
-  static int lastpulsect = ADAS.pulsect;
+  int lastpulsect = ADAS.pulsect;
 
-  for ( int i = 0; i < 1000 && lastpulsect == ADAS.pulsect; i++) {
+  for ( int i = 0; i < 100 && lastpulsect == ADAS.pulsect; i++) {
     digitalWrite(hbridgeENpin, HIGH);
     digitalWrite(hbridgeIN1pin, HIGH); //test stop condition 1
     digitalWrite(hbridgeIN2pin, HIGH);
@@ -385,6 +385,7 @@ int ADASselftest() {
   ADAS.desiredpos = ADAS.pulsect + ADAS_ERROR + 2; //test forward condition.
   for (int i = 0; i < 100; i++) {
     ADASupdate();
+    delay(10);
   }
   if (ADAS.pulsect < lastpulsect) { //Polarity swapped.
     ADAS.error = -3;
@@ -397,9 +398,10 @@ int ADASselftest() {
     return ADAS.error;
   }
 
-  ADAS.desiredpos = ADAS.pulsect - ADAS_ERROR - 2; //test reverse condition.
-  for (int i = 0; i < 1000; i++) {
+  ADAS.desiredpos = ADAS.pulsect - (ADAS_ERROR - 2) * 2; //test reverse condition.
+  for (int i = 0; i < 100; i++) {
     ADASupdate();
+    delay(10);
   }
   if (ADAS.pulsect > lastpulsect) { //Polarity swapped.
     ADAS.error = -5;
@@ -413,12 +415,14 @@ int ADASselftest() {
   }
 
   ADAS.desiredpos = ADAS_MAX_DEPLOY; //test full range
-  for (int i = 0; i < 2000 && lastpulsect == ADAS.pulsect; i++) {
+  for (int i = 0; i < 200 && lastpulsect == ADAS.pulsect; i++) {
     ADASupdate();
+    delay(10);
   }
   ADAS.desiredpos = 50;
-  for (int i = 0; i < 2000 && lastpulsect == ADAS.pulsect; i++) {
+  for (int i = 0; i < 200 && lastpulsect == ADAS.pulsect; i++) {
     ADASupdate();
+    delay(10);
   }
   if ((ADAS.pulsect > (50 + ADAS_ERROR)) || (ADAS.pulsect < (50 - ADAS_ERROR))) { //Motor indexing issue.
     ADAS.error = -7;
@@ -426,8 +430,9 @@ int ADASselftest() {
   }
 
   ADAS.desiredpos = 0 - ADAS_ERROR - 1;
-  for (int i = 0; i < 1000 && lastpulsect == ADAS.pulsect; i++) {
+  for (int i = 0; i < 100 && lastpulsect == ADAS.pulsect; i++) {
     ADASupdate();
+    delay(10);
   }
   if ((ADAS.pulsect > (0 + ADAS_ERROR)) || (ADAS.pulsect < (0 - ADAS_ERROR))) { //Motor past limit. Fins disengaged or limit switch failure.
     ADAS.error = -8;

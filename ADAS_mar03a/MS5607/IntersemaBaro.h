@@ -191,12 +191,12 @@ private:
     }
 
     void readyAdc() {
-    	wire.beginTransmission(i2cAddr_);
-	wire.write(cmdAdcReady_);
-	wire.endTransmission();
+    	Wire.beginTransmission(i2cAddr_);
+	Wire.write(cmdAdcConv_);
+	Wire.endTransmission();
 	ready_ts = millis();
     }
-    
+   
     int32_t ReadAdc(const uint8_t cmd)
     {             
 	if (ready_ts == 0) {
