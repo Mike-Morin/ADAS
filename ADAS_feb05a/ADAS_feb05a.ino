@@ -1,4 +1,4 @@
-//#include "BLESerial/BLESerial.h"
+  //#include "BLESerial/BLESerial.h"
 
 #include "MS5607/IntersemaBaro.h"
 
@@ -8,18 +8,17 @@
 #include <Wire.h>
 #include <CurieIMU.h>
 #include "MPU6050.h"
-
-//#include <CurieBLE.h>
+#include "MadgwickAHRS.h"
 
 #define ADAS_ERROR 2 //Allowed error in ADAS motion due to overshoot. (encoder pulses) 
 #define ADAS_SLOW_THRESH 10 // Number of pulses away from target at which ADAS slows down. (encoder pulses)
 #define ADAS_MAX_JERK_TIME 500 // Amount of time ADAS slowing is to be applied before jerk condition is cleared. (milliseconds)
 #define ADAS_MAX_DEPLOY 220 // Max number of ADAS pulses--this is where the fins disengage.(encoder pulses)
-#define ADAS_PWM_FREQ 75 // PWM frequency for slow condition. (#/255)
+#define ADAS_PWM_FREQ 255 // PWM frequency for slow condition. (#/255)
 #define LAUNCH_THRESHOLD_TIME 200 //(ms)
 #define LAUNCH_THRESHOLD_ACC 4 //(g)
 
-#define WDUS 1000000 //Number of microseconds until watchdog times out and e-stops ADAS. (1000000us = 1s)
+#define WDUS 2000000 //Number of microseconds until watchdog times out and e-stops ADAS. (1000000us = 1s)
 
 /* Pin defs */
 const byte hbridgeIN1pin = 2; //h-bridge board pins 2 & 3
@@ -58,10 +57,11 @@ typedef struct {
 
 ADASstate ADAS;
 /* Data variables */
-float ADASdatabuf[16][10];
+float ADASdatabuf[18][10];
 
 Intersema::BaroPressure_MS5607B MS5607alt(true);
 MPU6050 IMU;
+Madgwick filter;
 
 File ADASdatafile;
 
@@ -73,7 +73,7 @@ void onLaunch() {
 
 void ADASWDtimeout() {
   /* Executed by main watchdog timer if it times out */
-
+    
   ADAS.inFatalError = true; // emergency stop
   MotorStop();
   ADAS.desiredpos = ADAS.pulse_count;
@@ -184,6 +184,7 @@ void ADASmove() {
     ADASbeep(-99);
     return;
   }
+
   if (ADAS.slow) {
     analogWrite(hbridgeENpin, ADAS_PWM_FREQ);
   } else {
@@ -207,7 +208,7 @@ void ADASupdate() {
 
   ADASmove(); //ADAS won't move unless ADASmove() is called here.
 
-  if (ADAS.lastdir != ADAS.dir) { //Prevents sudden changes by setting slow flag.
+  /*if (ADAS.lastdir != ADAS.dir) { //Prevents sudden changes by setting slow flag.
     ADAS.jerk = true;
     ADAS.slow = true;
     lastjerk =  millis();
@@ -216,11 +217,11 @@ void ADASupdate() {
   if ((millis() - lastjerk) >= ADAS_MAX_JERK_TIME && ADAS.jerk == true) {
     ADAS.slow = false;
     ADAS.jerk = false;
-  }
+  }*/
 
   if (ADAS.pulse_count <= (ADAS.desiredpos - ADAS_ERROR)) { // Need to go forward to achieve target pos.
     ADAS.dir = 1;
-    ADAS.lastdir = ADAS.dir;
+   // ADAS.lastdir = ADAS.dir;
     if (ADAS.pulse_count >= (ADAS.desiredpos - ADAS_SLOW_THRESH)) { //slow when approaching target
       ADAS.slow = true;
     }
@@ -302,12 +303,24 @@ void getData() {
     ADASdatabuf[11][i] = convertRawGyro(gy);
     ADASdatabuf[12][i] = convertRawGyro(gz);
 
-    ADASdatabuf[13][i] = (CurieIMU.readTemperature() / 512.0 + 23);
+     filter.updateIMU(
+      ADASdatabuf[7][i],
+      ADASdatabuf[8][i],
+      ADASdatabuf[9][i],
+      ADASdatabuf[10][i],
+      ADASdatabuf[11][i],
+      ADASdatabuf[12][i]);
+    ADASdatabuf[13][i] = filter.getPitch();
+    ADASdatabuf[14][i] = filter.getRoll();
+    ADASdatabuf[15][i] = filter.getYaw();
+    
+
+    ADASdatabuf[16][i] = (CurieIMU.readTemperature() / 512.0 + 23);
 
     if (i == 0) { // The altimeter is polled once.
-      ADASdatabuf[14][i] = MS5607alt.getHeightCentiMeters();
+      ADASdatabuf[17][i] = MS5607alt.getHeightCentiMeters();
     } else {
-      ADASdatabuf[14][i] = ADASdatabuf[14][i - 1];
+      ADASdatabuf[17][i] = ADASdatabuf[17][i - 1];
     }
   }
 }
@@ -330,11 +343,10 @@ void writeData() {
 
   if (ADASdatafile) {
     for (int j = 0; j < 10; j++) { //10 blocks of
-      for (int i = 0; i < 15; i++) { //9 sensor outputs
+      for (int i = 0; i < 18; i++) { //9 sensor outputs
         ADASdatafile.print(ADASdatabuf[i][j]);
         ADASdatafile.print(",");
       }
-      ADASdatafile.print(",");
       ADASdatafile.print(ADAS.launched);
       ADASdatafile.print(",");
       ADASdatafile.print(ADAS.pulse_count);
@@ -494,8 +506,8 @@ void AttachInterrupts() {
   /*
     All interrupts that should be detached for sd card reading/writting
   */
+    attachInterrupt(digitalPinToInterrupt(limitswitchpin), ADASzero, FALLING); //Catch interrupts from the encoder.
   attachInterrupt(digitalPinToInterrupt(encoderpinA), ADASpulse, RISING); //Catch interrupts from the encoder.
-  attachInterrupt(digitalPinToInterrupt(limitswitchpin), ADASzero, FALLING); // catch when the limit switch is disengaged
   CurieIMU.interrupts(CURIE_IMU_SHOCK);
 }
 
@@ -504,7 +516,6 @@ void DetachInterrupts() {
     All interrupts that should be reatached after sd card reading/writting
   */
   detachInterrupt(encoderpinA);
-  detachInterrupt(limitswitchpin);
   CurieIMU.noInterrupts(CURIE_IMU_SHOCK);
   // don't detach watchdog to catch failure in sd card writing
 }
@@ -547,6 +558,7 @@ void MotorMove(int direction) {
     0 = stop
     1 = forwards
   */
+    digitalWrite(hbridgeENpin, HIGH);
 
   if (direction == 1) { //forward
     digitalWrite(hbridgeIN1pin, HIGH);
@@ -575,15 +587,17 @@ void setup() {
   CurieIMU.begin();
   CurieIMU.setAccelerometerRange(16);
   CurieIMU.setGyroRate(3200);
-  CurieIMU.setAccelerometerRate(1600);
+  CurieIMU.setAccelerometerRate(12.5);
 
-  CurieIMU.setDetectionThreshold(CURIE_IMU_SHOCK, 8000);
+  CurieIMU.setDetectionThreshold(CURIE_IMU_SHOCK, 300);
   CurieIMU.setDetectionDuration(CURIE_IMU_SHOCK, 75);
   CurieIMU.attachInterrupt(onLaunch);
   
   
   IMU.initialize();
   IMU.setRate(1600);
+
+  filter.begin(1600);
 
   while (!SD.begin(sdpin)) { //Stop everything if we cant see the SD card!
     Serial.println("Card failed or not present.");
@@ -596,14 +610,15 @@ void setup() {
 
   delay(500);
 
-// 10 seconds after launch
-// 25 second after launch
   /* ADAS control stuff */
   pinMode(hbridgeIN1pin, OUTPUT); //hbridge IN1
   pinMode(hbridgeIN2pin, OUTPUT); //hbridge IN2
   pinMode(hbridgeENpin, OUTPUT); //hbridge EN pin for pwm
   pinMode(encoderpinA, INPUT); //encoder A (or B... either works).
   pinMode(limitswitchpin, INPUT);
+
+        digitalWrite(hbridgeENpin, HIGH);
+
 
   AttachInterrupts();
 
@@ -622,16 +637,14 @@ void loop() {
   getData();
   writeData();
   if (ADAS.launched) {
-    if (25000 > (millis() - ADAS.launch_time) > 10000 && ADAS.desiredpos == 0) {
-      ADAS.desiredpos = (int) 0.60*220;
-      ADASupdate();
-    } else if (25000>(millis() - ADAS.launch_time) && ADAS.desiredpos != 0) {
+    if (25000 > (millis() - ADAS.launch_time) && (millis() - ADAS.launch_time) > 10000 && ADAS.desiredpos == 0) {
+      ADAS.desiredpos = 100;
+    } else if (25000<(millis() - ADAS.launch_time) && ADAS.desiredpos != 0) {
       ADAS.desiredpos = 0;
-      ADASupdate();
     }
   }
-//  ADASupdate();
-//  ADASlaunchtest();
+  ADASupdate();
+  //ADASlaunchtest();
 //  Serial.println(ADAS.launched);
 //  Serial.println(ADAS.error);
 }
