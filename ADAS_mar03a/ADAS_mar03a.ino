@@ -93,7 +93,6 @@ Intersema::BaroPressure_MS5607B MS5607alt(true);
 MPU6050 IMU;
 Madgwick filter;
 
-File ADASdatafile;
 
 void AttachInterrupts(){
 	attachInterrupt(digitalPinToInterrupt(encoderpinA), ADASpulse, RISING); //Catch interrupts from the encoder.
@@ -400,7 +399,7 @@ void write_data() {
             dataframe current_frame = databuffer[i];
             String out_buffer = String(256);
             out_buffer += String(current_frame.ts);
-            char charbuf[256];
+            datafile.println(out_buffer);
         }
         datafile.close();
     } else {
@@ -443,7 +442,7 @@ void ADASlaunchtest() {
 }
 
 
-int ADASselftest() {
+//int ADASselftest() {
   /*
     Checks the fins for proper behavior and
     verifies that h-bridge and motor
@@ -451,7 +450,7 @@ int ADASselftest() {
     SD card write and read test. Returns 0 if
     everything is OK. A negative if not so.
   */
-  int lastpulsect = ADAS.pulsect;
+ /* int lastpulsect = ADAS.pulsect;
 
   for ( int i = 0; i < 100 && lastpulsect == ADAS.pulsect; i++) {
     digitalWrite(hbridgeENpin, HIGH);
@@ -540,7 +539,7 @@ int ADASselftest() {
   ADAStestfile.close();
   ADAS.error = 0;
   return ADAS.error; // All tests passed.
-}
+}*/
 
 
 unsigned long microsPerReading, microsPrevious; // number of micros per reading that are required and the micros of the previous reading
