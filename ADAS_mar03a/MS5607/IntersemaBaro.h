@@ -107,7 +107,7 @@ private:
     static const uint8_t cmdAdc2048_ = 0x06;
     static const uint8_t cmdAdc4096_ = 0x08;
     static const uint8_t cmdPromRd_  = 0xA0;
-
+    unsigned long ready_ts;
     void ResetSensor()
     {
 	Wire.begin();
@@ -189,39 +189,49 @@ private:
 	
         return AltCm;	
     }
+
+    void readyAdc() {
+    	wire.beginTransmission(i2cAddr_);
+	wire.write(cmdAdcReady_);
+	wire.endTransmission();
+	ready_ts = millis();
+    }
     
     int32_t ReadAdc(const uint8_t cmd)
     {             
-        Wire.beginTransmission(i2cAddr_);
-        Wire.write(cmdAdcConv_ | cmd); // send conversion command
-        Wire.endTransmission(); 
-
+	if (ready_ts == 0) {
+		readyAdc();
+	}
+	int ready_delay;
         // wait necessary conversion time
         switch(cmd & 0x0f) 
         {
         case cmdAdc256_: 
-            delay(1);
+            ready_delay = 1;
             break;
         case cmdAdc512_: 
-            delay(3);
+            ready_delay = 2;
             break;
         case cmdAdc1024_: 
-            delay(4);
+            ready_delay = 4;
             break;
         case cmdAdc2048_: 
-            delay(6);
+            ready_delay = 6;
             break;
         case cmdAdc4096_: 
-            delay(10); 
+            ready_delay = 10; 
             break;
         }
-
+	
+	while (millis() < ready_ts+ready_delay) {
+		delay(1);
+	}
         Wire.beginTransmission(i2cAddr_);
         Wire.write(cmdAdcRead_);
         Wire.endTransmission();
     
         Wire.requestFrom(i2cAddr_, static_cast<uint8_t>(3));
-
+	ready_ts = 0;
         if(Wire.available() >= 3)
         {
             uint16_t ret  = Wire.read(); // read MSB and acknowledge
