@@ -506,7 +506,7 @@ void AttachInterrupts() {
   /*
     All interrupts that should be detached for sd card reading/writting
   */
-    attachInterrupt(digitalPinToInterrupt(limitswitchpin), ADASzero, FALLING); //Catch interrupts from the encoder.
+  attachInterrupt(digitalPinToInterrupt(limitswitchpin), ADASzero, FALLING); //Catch interrupts from the encoder.
   attachInterrupt(digitalPinToInterrupt(encoderpinA), ADASpulse, RISING); //Catch interrupts from the encoder.
   CurieIMU.interrupts(CURIE_IMU_SHOCK);
 }
@@ -589,7 +589,7 @@ void setup() {
   CurieIMU.setGyroRate(3200);
   CurieIMU.setAccelerometerRate(12.5);
 
-  CurieIMU.setDetectionThreshold(CURIE_IMU_SHOCK, 300);
+  CurieIMU.setDetectionThreshold(CURIE_IMU_SHOCK, 1500);
   CurieIMU.setDetectionDuration(CURIE_IMU_SHOCK, 75);
   CurieIMU.attachInterrupt(onLaunch);
   
