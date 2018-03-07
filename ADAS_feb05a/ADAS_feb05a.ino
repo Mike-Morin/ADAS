@@ -41,15 +41,15 @@ const int  sdpin = 10; // Also known as SS.
 
 /* ADAS variables */
 typedef struct {
-  boolean launched = false;            //Set to true when accelerometer detects launch condition.
+  boolean launched = false;     //Set to true when accelerometer detects launch condition.
   unsigned long launch_time = 0;
-  volatile int dir = 0;                //Current ADAS direction.
-  int lastdir = -3;                     //Previous ADAS direction.
-  volatile int pulse_count = 0;            //Current pulse count. Set by interrupt in ADASpulse();
-  int desiredpos = 0;                // Set this and run ADASupdate() to move ADAS to that position. (pulses)
-  volatile boolean atLimit = false;    //True when limit switch is hit. Updated by ADASupdate() and ADAShitlimit().
-  unsigned int jerktime = 0; // Time change since last state change. (ms)
-  boolean slow = false;               // ADAS is in slow mode.
+  volatile int dir = 0;         //Current ADAS direction.
+  int lastdir = -3;             //Previous ADAS direction.
+  volatile int pulse_count = 0; //Current pulse count. Set by interrupt in ADASpulse();
+  int desiredpos = 0;           // Set this and run ADASupdate() to move ADAS to that position. (pulses)
+   boolean atLimit = false;     //True when limit switch is hit. Updated by ADASupdate() and ADAShitlimit().
+  unsigned int jerktime = 0;    // Time change since last state change. (ms)
+  boolean slow = false;         // ADAS is in slow mode.
   int error = -99;
   boolean inFatalError = false;
   boolean jerk = true;
@@ -234,31 +234,6 @@ void ADASupdate() {
   }
 }
 
-
-void isLaunch() {
-  /*
-    Launch detection code. If the total acceleration on the system
-    is above LAUNCH_THRESHOLD_ACC for a continuous LAUNCH_THRESHOLD_TIME,
-    the ADAS.launched flag is set.
-  */
-
-  boolean nolaunch = false;
-  static unsigned int lastmillis = 0;
-  if (millis() - lastmillis > LAUNCH_THRESHOLD_TIME) {
-    lastmillis = millis();
-    for (int i = 0; i < 10 && !nolaunch; i++) {
-      if ((sqrt(pow(ADASdatabuf[1][i], 2) + pow(ADASdatabuf[2][i], 2) + pow(ADASdatabuf[3][i], 2))) < LAUNCH_THRESHOLD_ACC) {
-        Serial.println(sqrt(pow(ADASdatabuf[1][i], 2) + pow(ADASdatabuf[2][i], 2) + pow(ADASdatabuf[3][i], 2)));
-        nolaunch = true;
-      }
-    }
-
-    if (!nolaunch) {
-      ADAS.launched = true;
-    }
-  }
-}
-
 float convertRawGyro(int gRaw) {
   // since we are using 250 degrees/seconds range
   // -250 maps to a raw value of -32768
@@ -273,29 +248,42 @@ float convertRawAcceleration(int aRaw) {
   // -2g maps to a raw value of -32768
   // +2g maps to a raw value of 32767
 
-  float a = (aRaw * 2.0) / 32768.0;
+  float a = (aRaw * 16.0) / 32768.0;
   return a;
 }
 
-void getData() {
+void getData(int i) {
   /*
     Polls all the sensors and puts the data in the ADASdatabuf.
     The acclerometer gets polled 10 times for every altimeter
     reading because the altimeter is very slow (fix!?).
   */
 
-  for (int i = 0; i < 10; i++) { //The acclerometer is polled 10 times.
     ADASdatabuf[0][i] = micros();
 
-    CurieIMU.readAccelerometerScaled(ADASdatabuf[1][i], ADASdatabuf[2][i], ADASdatabuf[3][i]);
-    CurieIMU.readGyroScaled(ADASdatabuf[4][i], ADASdatabuf[5][i], ADASdatabuf[6][i]);
+    CurieIMU.readAccelerometerScaled(
+        ADASdatabuf[1][i],
+        ADASdatabuf[2][i], 
+        ADASdatabuf[3][i]
+    );
+    
+    CurieIMU.readGyroScaled(
+        ADASdatabuf[4][i], 
+        ADASdatabuf[5][i], 
+        ADASdatabuf[6][i]
+    );
+    
     int16_t ax, ay, az, gx, gy, gz;
+    
     IMU.getMotion6(&ax,
                    &ay,
                    &az,
                    &gx,
                    &gy,
-                   &gz);
+                   &gz
+    );
+    
+    // convert everything to rational units 
     ADASdatabuf[7][i] = convertRawAcceleration(ax);
     ADASdatabuf[8][i] = convertRawAcceleration(ay);
     ADASdatabuf[9][i] = convertRawAcceleration(az);
@@ -303,13 +291,15 @@ void getData() {
     ADASdatabuf[11][i] = convertRawGyro(gy);
     ADASdatabuf[12][i] = convertRawGyro(gz);
 
-     filter.updateIMU(
+    filter.updateIMU(
       ADASdatabuf[7][i],
       ADASdatabuf[8][i],
       ADASdatabuf[9][i],
       ADASdatabuf[10][i],
       ADASdatabuf[11][i],
-      ADASdatabuf[12][i]);
+      ADASdatabuf[12][i]
+    );
+    
     ADASdatabuf[13][i] = filter.getPitch();
     ADASdatabuf[14][i] = filter.getRoll();
     ADASdatabuf[15][i] = filter.getYaw();
@@ -322,7 +312,6 @@ void getData() {
     } else {
       ADASdatabuf[17][i] = ADASdatabuf[17][i - 1];
     }
-  }
 }
 
 
@@ -364,39 +353,6 @@ void writeData() {
     ADASbeep(-9);
   }
   close(ADASdatafile);
-}
-
-
-void ADASlaunchtest() {
-  /*
-    Test launch code for model testing
-  */
-
-  static unsigned int curmillis = 0;
-  // if (ADAS.launched) {
-  if (curmillis == 0) {
-    curmillis = millis();
-  }
-  if (millis() - curmillis >= 1000 && millis() - curmillis < 2000) {
-    ADAS.desiredpos = 0;
-  }
-  if (millis() - curmillis >= 2000 && millis() - curmillis < 3000) {
-    ADAS.desiredpos = 50;
-  }
-  if (millis() - curmillis >= 3000 && millis() - curmillis < 4000) {
-    ADAS.desiredpos = 75;
-  }
-  if (millis() - curmillis >= 5000 && millis() - curmillis < 6000) {
-    ADAS.desiredpos = 100;
-  }
-  if (millis() - curmillis >= 7000 && millis() - curmillis < 8000) {
-    ADAS.desiredpos = 200;
-    curmillis = millis(); //remove this for actual launches! causes repeat.
-
-  }
-  if (millis() - curmillis >= 60000) {
-    //ADASclose();
-  }
 }
 
 
@@ -630,12 +586,15 @@ void setup() {
   //CurieTimerOne.start(WDUS, &ADASWDtimeout); //Starts watchdog timer.
 }
 
-
+int loopcount = 0;
 void loop() {
+  loopcount++;
   //CurieTimerOne.restart(WDUS); //Restarts watchdog timer.
   //BLESerial.println("Hello, this is ADAS.");
-  getData();
-  writeData();
+  getData(loopcount % 10);
+  if (loopcount%10 == 0) {
+    writeData();
+  }
   if (ADAS.launched) {
     if (25000 > (millis() - ADAS.launch_time) && (millis() - ADAS.launch_time) > 10000 && ADAS.desiredpos == 0) {
       ADAS.desiredpos = 100;
