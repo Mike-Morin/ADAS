@@ -168,11 +168,11 @@ void onLimitReached() {
     /*
         When minimum limit reached
     */
-    Serial.println("RIP");
+    //Serial.println("RIP");
     // zero the position
-    ADAS.position = 0;
+    //ADAS.position = 0;
     // stop the motors
-    SetMotorDirection(STOP);
+    //SetMotorDirection(STOP);
 }
 
 // normal functions
@@ -314,12 +314,12 @@ void DetachInterrupts() {
     detachInterrupt(limitswitch_pin);
     CurieIMU.detachInterrupt();
 }
-
+/*
 int ADASSelfTest() {
-    /*
-        Selftest program run ever time it initializes
-        must be run after interrupts are set
-    */
+    
+        //Selftest program run ever time it initializes
+        //must be run after interrupts are set
+    
     digitalWrite(hbridgeEN_pin, HIGH);
 
     ADAS.enforce_target = false;
@@ -353,6 +353,7 @@ int ADASSelfTest() {
     if (ADAS.position != 0) {
       return -4; // Zeroing problem
     }
+    
 /*
     if (ADAS.position != 0) {
         return -14; // failed to stop at limitswitch
@@ -372,8 +373,10 @@ int ADASSelfTest() {
     }
     close(testfile);
     */
+    /*
     return 0;
 }
+*/
 
 File open(char filename[], byte mode) {
     SetMotorDirection(STOP); // Stop motors
@@ -470,6 +473,8 @@ void setup() {
     microsPerReading = 1000000/IMU_UPDATE_RATE;
     microsPrevious = micros();
 
+    ADAS.launched = true;
+
    /* while (!SD.begin(sd_pin)) {
         beep(-1); // sd card not working
     }
@@ -482,16 +487,17 @@ void setup() {
     pinMode(limitswitch_pin, INPUT);
 
     AttachInterrupts();
-
+/*
     while (true) {
         Serial.print("Self Test Error: ");
         Serial.println(ADASSelfTest());
         Serial.println(ADAS.position);
     }
+    */
 
     // use internal Curie stuff for interupts for speed and ease of operation
 
-    CurieTimerOne.start(WATCHDOG_LIMIT, &WatchdogTimeout);
+    //CurieTimerOne.start(WATCHDOG_LIMIT, &WatchdogTimeout);
     CurieIMU.interrupts(CURIE_IMU_SHOCK);
     CurieIMU.attachInterrupt(onLaunch);
     // may need to stop interrupts on FIFO full and data ready
@@ -503,9 +509,10 @@ unsigned long loopcount = 0;
 unsigned long prev_time = 0; //measured in seconds
 
 void loop() {
+    Serial.println("Yay");
     CurieTimerOne.restart(WATCHDOG_LIMIT);
     GetData(); // always collect data
-
+    
     if (!ADAS.launched) {
         if (loopcount % 20 == 0) { // collect data at half speed on the launch pad
           if (DB.length == 10) {
@@ -519,11 +526,17 @@ void loop() {
         /*
         Things to do during flight upwards
         */
+        float height = 200;
+        float velocity = 220;
+        
+        Serial.println("ADAS pos: ");
+        Serial.println(ADAS.position);
         //record sensor data
         WriteData();
         //update the ADAS position
-        float height = DB.position[DB.length-1];
-        float velocity = DB.vertical_velocity[DB.length-1];
+        //float height = DB.position[DB.length-1];
+        //float velocity = DB.vertical_velocity[DB.length-1];
+        /////FOR TESTING
         float prev_deployment = ADAS.target/ADAS_MAX_POS;  //the ratio of the previous deployment to full deployment
         float cur_time = 0;
         float prev_time =0;
@@ -539,7 +552,10 @@ void loop() {
         float time_diff = cur_time - prev_time;
         double new_ADAS_deployment = PID(height, velocity, prev_deployment, time_diff);
         //update the actual ADAS deployment
-        ADAS.target = (int) new_ADAS_deployment*ADAS_MAX_POS;
+        
+        ADAS.target = (int) (new_ADAS_deployment*ADAS_MAX_POS);
+        onEncoderPulse();
+        Serial.println(ADAS.target);
     } else {
         /*
             Things to do while descending or on the ground
@@ -556,12 +572,11 @@ void loop() {
 //constants
 float k_d = 0.1;
 float k_p = 0.9;
-float signal_to_ADAS_ratio = 0.01;  //converts between the signal units to the deployment percentage units
+float signal_to_ADAS_ratio = 0.1;  //converts between the signal units to the deployment percentage units
 
 
 //global variables
 int function_index = 1; //keep track of which function we are currently calculating with
-double prev_signal = 0;  //the cur_signal from the previous loop
 
 //functions
 int start_heights[] = {298, 396, 489, 577, 660, 738, 812, 881, 946, 1008, 1066, 1120, 1172, 1220, 1265, 1306, 1345, 1381, 1415, 1437, 1454, 1470, 1486, 1501, 1514, 1527, 1539, 1549, 1559, 1568, 1576, 1584, 1590, 1595, 1600, 1604, 1606, 1608, 1609};
@@ -636,15 +651,24 @@ double calc_velocity(float height){
 double PID(float my_height, double my_velocity, float prev_signal, float delta_t){ 
   
   float wanted_velocity = calc_velocity(my_height);
-  float cur_signal = (my_velocity-wanted_velocity)*signal_to_ADAS_ratio;//converted to a number between 0 and 1 ish so that its comparable to prev_signal
+  Serial.println("Wanted Vel: ");
+  Serial.println(wanted_velocity);
+  Serial.println("My velocity");-
+  Serial.println(my_velocity);
   
+  float cur_signal = (my_velocity-wanted_velocity)*signal_to_ADAS_ratio;//converted to a number between 0 and 1 ish so that its comparable to prev_signal
+  Serial.println("Prop signal");
+  Serial.println(cur_signal);
   
   float deriv_signal = (cur_signal-prev_signal)/delta_t*signal_to_ADAS_ratio; //cur_sig-prev_sig is approx between 0 and 1, divided by delta t is on the order of 100-1000 so multiply by ///////////NEEED TO FIND TEH FREQUENCY TO MAKE THIS GUUUUUDD
   //don't do integral control for now, not worth it and isn't effective
-  
+  Serial.println("Deriv signal");
+  Serial.println(deriv_signal);
   float final_signal = (k_p * cur_signal + k_d * deriv_signal);
   
   float new_deployment = prev_signal + final_signal;
+  Serial.println("New Depl");
+  Serial.println(new_deployment);
   //check that the new deployment is not out of the desired range of 0 to 1
   if(new_deployment > 1){
     new_deployment = 1;

@@ -1,19 +1,18 @@
+
+/*
 //cosntants
 float k_d = 0.1;
 float k_p = 0.9;
-float signal_to_ADAS_depl = 90;
-float delta_t = 0.01;
+float signal_to_ADAS_ratio = 90;
 
 
 //global variables
 int function_index = 1; //keep track of which function we are currently calculating with
 double prev_signal = 0;  //the cur_signal from the previous loop
 
-//functions ///MIGHT NEED TO ADD ZERO IN THE BEGINING
+
 int start_heights[] = {298, 396, 489, 577, 660, 738, 812, 881, 946, 1008, 1066, 1120, 1172, 1220, 1265, 1306, 1345, 1381, 1415, 1437, 1454, 1470, 1486, 1501, 1514, 1527, 1539, 1549, 1559, 1568, 1576, 1584, 1590, 1595, 1600, 1604, 1606, 1608, 1609};
 
-//double velocity_function1[] = {-1.94990816e-40, 4.31360870e-37, -4.03552040e-34, 1.97352573e-31, -4.47454183e-29, -2.79194722e-27, 4.44008811e-24, -8.45546718e-22, -1.70453995e-19, 1.32156649e-16, -3.68749797e-14, 6.40549202e-12, -7.68453997e-10, 6.56546421e-08, -4.00517292e-06, 1.71885641e-04, -5.03485211e-03, 9.61106407e-02, -1.13281432e+00, 9.28356781e+00, 3.54272273e+00};
-//double velocity_function2[] = {-6.15047837e-27, 5.70693178e-23, -2.34204648e-19, 5.58915483e-16, -8.57418948e-13, 8.81699003e-10, -6.14071341e-07, 2.85300345e-04, -8.44114066e-02, 1.42146793e+01, -8.21502738e+02};
 double velocity_functions[][3] = {
   { -0.000455874984234 ,  0.216170183163 ,  176.710523811 },
   { 1.04868657812e-05 ,  -0.124391243726 ,  238.721409985 },
@@ -57,6 +56,9 @@ double velocity_functions[][3] = {
 
 double calc_velocity(float height){
   function_index = 0;
+  if(height < start_heights[0]){
+    return 0;
+  }
   while (height > start_heights[function_index] && function_index < sizeof(start_heights)/sizeof(int)){
     function_index++;
   }
@@ -73,3 +75,28 @@ double calc_velocity(float height){
    }
    return function_value;
 }
+
+float PID(float my_height, float my_velocity, float prev_signal, float delta_t){ 
+  
+  float wanted_velocity = (float) (calc_velocity(my_height));
+  float cur_signal = (my_velocity-wanted_velocity)*signal_to_ADAS_ratio;//converted to a number between 0 and 1 ish so that its comparable to prev_signal
+  
+  float deriv_signal = (cur_signal-prev_signal)/delta_t*signal_to_ADAS_ratio; //cur_sig-prev_sig is approx between 0 and 1, divided by delta t is on the order of 100-1000 so multiply by ///////////NEEED TO FIND TEH FREQUENCY TO MAKE THIS GUUUUUDD
+  //don't do integral control for now, not worth it and isn't effective
+  
+  float final_signal = (k_p * cur_signal + k_d * deriv_signal);
+  
+  float new_deployment = prev_signal + final_signal;
+  
+  //check that the new deployment is not out of the desired range of 0 to 1
+  if(new_deployment > 1){
+    new_deployment = 1;
+  }
+  if(new_deployment < 0){
+    new_deployment = 0;
+  }
+  
+  return new_deployment;
+}
+
+*/
