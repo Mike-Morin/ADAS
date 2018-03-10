@@ -250,6 +250,16 @@ float convertRawAcceleration(int aRaw) {
   return a;
 }
 
+unsigned long get_time() {
+  unsigned long ts = 0;
+  Wire.requestFrom(8, 4);    // request 2 bytes from slave device #8
+  while (Wire.available()){
+    ts = ts << 8;
+    ts |= Wire.read();
+  }
+  return ts;
+}
+
 void getData(int i) {
   /*
     Polls all the sensors and puts the data in the ADASdatabuf.
@@ -257,7 +267,7 @@ void getData(int i) {
     reading because the altimeter is very slow (fix!?).
   */
 
-    tsbuf[i] = millis();
+    tsbuf[i] = get_time();
 
 //    CurieIMU.readAccelerometerScaled(
 //        ADASdatabuf[0][i],
@@ -308,19 +318,19 @@ void getData(int i) {
     if (i == 0) { // The altimeter is polled once.
       ADASdatabuf[9][i] = MS5607alt.getHeightCentiMeters();
     } else {
-      ADASdatabuf[9][i] = ADASdatabuf[17][i - 1];
+      ADASdatabuf[9][i] = ADASdatabuf[9][i - 1];
     }
 
     //PID needs the vertical velocity and height
-    //18 is vertical velocity
-    //19 is vertical position
+    //9 is vertical velocity
+    //10 is vertical position
     if(!ADAS.launched){
     } else {
       float prev_vert_velocity = 0;
       if(i != 0){
-        prev_vert_velocity = ADASdatabuf[9][i-1];
+        prev_vert_velocity = ADASdatabuf[10][i-1];
       } else {
-        prev_vert_velocity = ADASdatabuf[9][9];
+        prev_vert_velocity = ADASdatabuf[10][9];
       }
 
       float vertical_acc = (sin(ADASdatabuf[7][i])*ADASdatabuf[0][i]) * 9.81;
@@ -329,10 +339,10 @@ void getData(int i) {
       float prev_h = 0;
       if(i != 0){
         prev_t = tsbuf[i-1];
-        prev_h = ADASdatabuf[10][i-1];
+        prev_h = ADASdatabuf[11][i-1];
       } else {
         prev_t = tsbuf[9];
-        prev_h = ADASdatabuf[10][9];
+        prev_h = ADASdatabuf[11][9];
       }
       float delta_t = (tsbuf[i] - prev_t)/1000; //in seconds
       float new_vert_velocity = prev_vert_velocity + vertical_acc * delta_t;
@@ -363,7 +373,7 @@ void writeData() {
   if (ADASdatafile) {
     for (int j = 0; j < 10; j++) { //10 blocks of
       ADASdatafile.print(tsbuf[j]);
-       for (int i = 0; i < 12; i++) { //9 sensor outputs
+       for (int i = 0; i < 12; i++) { //9 sensor outputs + 3 for phun
         ADASdatafile.print(ADASdatabuf[i][j]);
         ADASdatafile.print(",");
       }
@@ -528,26 +538,17 @@ void loop() {
   if (ADAS.launched) {
 
     float prev_deployment = ADAS.desiredpos/ADAS_MAX_DEPLOY;  //the ratio of the previous deployment to full deployment
-    float cur_time = ADASdatabuf[0][loopcount%10]/1000000; //in seconds
-    float velocity = ADASdatabuf[18][loopcount%10];
-    float height = ADASdatabuf[19][loopcount%10];
+    float cur_time = tsbuf[loopcount%10]/1000; //in seconds
+    float velocity = ADASdatabuf[10][loopcount%10];
+    float height = ADASdatabuf[11][loopcount%10];
 
     float time_diff = cur_time - prev_time;
     float new_ADAS_deployment = PID(height, velocity, prev_deployment, time_diff);
     //update the actual ADAS deployment
 
     ADAS.desiredpos = (int) (new_ADAS_deployment*ADAS_MAX_DEPLOY);
-    //make the motor turn
 
     prev_time = cur_time;
-    /* old code from the test flight
-    if (25000 > (millis() - ADAS.launch_time) && (millis() - ADAS.launch_time) > 10000 && ADAS.desiredpos == 0) {
-      ADAS.desiredpos = ADAS_MAX_DEPLOY;
-    } else if (25000<(millis() - ADAS.launch_time) && ADAS.desiredpos != 0) {
-      ADAS.desiredpos = 0;
-    }
-    */
-
   }
   ADASupdate();
   //ADASlaunchtest();
@@ -561,7 +562,7 @@ void loop() {
 //cosntants
 float k_d = 0.1;
 float k_p = 0.9;
-float signal_to_ADAS_ratio = 90;
+float signal_to_ADAS_ratio = 0.1;
 
 
 //global variables
