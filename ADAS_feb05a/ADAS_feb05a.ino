@@ -6,14 +6,14 @@
 #include <SPI.h>
 #include <SD.h>
 #include <Wire.h>
-#include <CurieIMU.h>
+//#include <CurieIMU.h>
 #include "MPU6050.h"
 #include "MadgwickAHRS.h"
 
-#define ADAS_ERROR 2 //Allowed error in ADAS motion due to overshoot. (encoder pulses) 
+#define ADAS_ERROR 1 //Allowed error in ADAS motion due to overshoot. (encoder pulses) 
 #define ADAS_SLOW_THRESH 10 // Number of pulses away from target at which ADAS slows down. (encoder pulses)
 #define ADAS_MAX_JERK_TIME 500 // Amount of time ADAS slowing is to be applied before jerk condition is cleared. (milliseconds)
-#define ADAS_MAX_DEPLOY 220 // Max number of ADAS pulses--this is where the fins disengage.(encoder pulses)
+#define ADAS_MAX_DEPLOY 50 // Max number of ADAS pulses--this is where the fins disengage.(encoder pulses)
 #define ADAS_PWM_FREQ 255 // PWM frequency for slow condition. (#/255)
 #define LAUNCH_THRESHOLD_TIME 200 //(ms)
 #define LAUNCH_THRESHOLD_ACC 4 //(g)
@@ -57,7 +57,8 @@ typedef struct {
 
 ADASstate ADAS;
 /* Data variables */
-float ADASdatabuf[18][10];
+unsigned long tsbuf[10];
+float ADASdatabuf[10][10];
 
 Intersema::BaroPressure_MS5607B MS5607alt(true);
 MPU6050 IMU;
@@ -66,9 +67,10 @@ Madgwick filter;
 File ADASdatafile;
 
 void onLaunch() {
+//  CurieIMU.detachInterrupt();
   ADAS.launched = true;
   ADAS.launch_time = millis();
-  CurieIMU.detachInterrupt();
+  digitalWrite(beeperpin, HIGH);
 }
 
 void ADASWDtimeout() {
@@ -134,11 +136,7 @@ void ADASpulse() {
     ADASbeep(-99);
     return;
   }
-  if (ADAS.dir == 1) {
-    ADAS.pulse_count++;
-  } else if (ADAS.dir == -1)  {
-    ADAS.pulse_count--;
-  }
+  ADAS.pulse_count+= ADAS.dir;
 
   if ((ADAS.pulse_count >= (ADAS.desiredpos - ADAS_ERROR)) && (ADAS.pulse_count <= (ADAS.desiredpos + ADAS_ERROR))) {
     ADAS.dir = 0;
@@ -259,20 +257,20 @@ void getData(int i) {
     reading because the altimeter is very slow (fix!?).
   */
 
-    ADASdatabuf[0][i] = micros();
+    tsbuf[i] = millis();
 
-    CurieIMU.readAccelerometerScaled(
-        ADASdatabuf[1][i],
-        ADASdatabuf[2][i], 
-        ADASdatabuf[3][i]
-    );
-    
-    CurieIMU.readGyroScaled(
-        ADASdatabuf[4][i], 
-        ADASdatabuf[5][i], 
-        ADASdatabuf[6][i]
-    );
-    
+//    CurieIMU.readAccelerometerScaled(
+//        ADASdatabuf[0][i],
+//        ADASdatabuf[1][i], 
+//        ADASdatabuf[2][i]
+//    );
+//    
+//    CurieIMU.readGyroScaled(
+//        ADASdatabuf[3][i], 
+//        ADASdatabuf[4][i], 
+//        ADASdatabuf[5][i]
+//    );
+//    
     int16_t ax, ay, az, gx, gy, gz;
     
     IMU.getMotion6(&ax,
@@ -284,33 +282,33 @@ void getData(int i) {
     );
     
     // convert everything to rational units 
-    ADASdatabuf[7][i] = convertRawAcceleration(ax);
-    ADASdatabuf[8][i] = convertRawAcceleration(ay);
-    ADASdatabuf[9][i] = convertRawAcceleration(az);
-    ADASdatabuf[10][i] = convertRawGyro(gx);
-    ADASdatabuf[11][i] = convertRawGyro(gy);
-    ADASdatabuf[12][i] = convertRawGyro(gz);
+    ADASdatabuf[0][i] = convertRawAcceleration(ax);
+    ADASdatabuf[1][i] = convertRawAcceleration(ay);
+    ADASdatabuf[2][i] = convertRawAcceleration(az);
+    ADASdatabuf[3][i] = convertRawGyro(gx);
+    ADASdatabuf[4][i] = convertRawGyro(gy);
+    ADASdatabuf[5][i] = convertRawGyro(gz);
 
     filter.updateIMU(
-      ADASdatabuf[7][i],
-      ADASdatabuf[8][i],
-      ADASdatabuf[9][i],
-      ADASdatabuf[10][i],
-      ADASdatabuf[11][i],
-      ADASdatabuf[12][i]
+      ADASdatabuf[0][i],
+      ADASdatabuf[1][i],
+      ADASdatabuf[2][i],
+      ADASdatabuf[3][i],
+      ADASdatabuf[4][i],
+      ADASdatabuf[5][i]
     );
     
-    ADASdatabuf[13][i] = filter.getPitch();
-    ADASdatabuf[14][i] = filter.getRoll();
-    ADASdatabuf[15][i] = filter.getYaw();
+    ADASdatabuf[6][i] = filter.getPitch();
+    ADASdatabuf[7][i] = filter.getRoll();
+    ADASdatabuf[8][i] = filter.getYaw();
     
 
-    ADASdatabuf[16][i] = (CurieIMU.readTemperature() / 512.0 + 23);
+//    ADASdatabuf[9][i] = (CurieIMU.readTemperature() / 512.0 + 23);
 
     if (i == 0) { // The altimeter is polled once.
-      ADASdatabuf[17][i] = MS5607alt.getHeightCentiMeters();
+      ADASdatabuf[9][i] = MS5607alt.getHeightCentiMeters();
     } else {
-      ADASdatabuf[17][i] = ADASdatabuf[17][i - 1];
+      ADASdatabuf[9][i] = ADASdatabuf[17][i - 1];
     }
 }
 
@@ -332,7 +330,8 @@ void writeData() {
 
   if (ADASdatafile) {
     for (int j = 0; j < 10; j++) { //10 blocks of
-      for (int i = 0; i < 18; i++) { //9 sensor outputs
+      ADASdatafile.print(tsbuf[j]);
+       for (int i = 0; i < 10; i++) { //9 sensor outputs
         ADASdatafile.print(ADASdatabuf[i][j]);
         ADASdatafile.print(",");
       }
@@ -355,116 +354,13 @@ void writeData() {
   close(ADASdatafile);
 }
 
-
-int ADASselftest() {
-  /*
-    Checks the fins for proper behavior and
-    verifies that h-bridge and motor
-    connections are correct. Also does an
-    SD card write and read test. Returns 0 if
-    everything is OK. A negative if not so.
-  */
-  static int lastpulse_count = ADAS.pulse_count;
-
-  for ( int i = 0; i < 1000 && lastpulse_count == ADAS.pulse_count; i++) {
-    digitalWrite(hbridgeENpin, HIGH);
-    digitalWrite(hbridgeIN1pin, HIGH); //test stop condition 1
-    digitalWrite(hbridgeIN2pin, HIGH);
-    digitalWrite(hbridgeIN1pin, LOW); //test stop condition 2
-    digitalWrite(hbridgeIN2pin, LOW);
-    delay(10);
-  }
-  if (lastpulse_count != ADAS.pulse_count) { // Stop condition falure.
-    ADAS.error = -2;
-    return ADAS.error;
-  }
-  ADAS.desiredpos = ADAS.pulse_count + ADAS_ERROR + 2; //test forward condition.
-  for (int i = 0; i < 100; i++) {
-    ADASupdate();
-    delay(1);
-  }
-  if (ADAS.pulse_count < lastpulse_count) { //Polarity swapped.
-    ADAS.error = -3;
-    ADAS.inFatalError = true;
-    return ADAS.error;
-  }
-  if (ADAS.pulse_count == lastpulse_count) { //Motor not moving.
-    ADAS.error = -4;
-    ADAS.desiredpos = 0;
-    return ADAS.error;
-  }
-
-  ADAS.desiredpos = ADAS.pulse_count - ADAS_ERROR - 2; //test reverse condition.
-  for (int i = 0; i < 1000; i++) {
-    ADASupdate();
-    delay(1);
-  }
-  if (ADAS.pulse_count > lastpulse_count) { //Polarity swapped.
-    ADAS.error = -5;
-    ADAS.desiredpos = 0;
-    return ADAS.error;
-  }
-  if (ADAS.pulse_count == lastpulse_count) { //Motor not moving this time. Reverse is not working.
-    ADAS.error = -6;
-    ADAS.desiredpos = 0;
-    return ADAS.error;
-  }
-
-  ADAS.desiredpos = ADAS_MAX_DEPLOY; //test full range
-  for (int i = 0; i < 2000 && lastpulse_count == ADAS.pulse_count; i++) {
-    ADASupdate();
-    delay(10);
-  }
-  ADAS.desiredpos = 50;
-  for (int i = 0; i < 2000 && lastpulse_count == ADAS.pulse_count; i++) {
-    ADASupdate();
-    delay(10);
-  }
-  if ((ADAS.pulse_count > (50 + ADAS_ERROR)) || (ADAS.pulse_count < (50 - ADAS_ERROR))) { //Motor indexing issue.
-    ADAS.error = -7;
-    return ADAS.error;
-  }
-
-  ADAS.desiredpos = 0 - ADAS_ERROR - 1;
-  for (int i = 0; i < 1000 && lastpulse_count == ADAS.pulse_count; i++) {
-    ADASupdate();
-    delay(10);
-  }
-  if ((ADAS.pulse_count > (0 + ADAS_ERROR)) || (ADAS.pulse_count < (0 - ADAS_ERROR))) { //Motor past limit. Fins disengaged or limit switch failure.
-    ADAS.error = -8;
-    ADAS.inFatalError = true;
-    return ADAS.error;
-  }
-
-  char ADASteststring[11] = "TESTING123";
-  File ADAStestfile;
-
-  ADAStestfile = open("ADAStestfile.txt", FILE_WRITE);
-  ADAStestfile.println(ADASteststring);
-  close(ADAStestfile);
-
-  ADAStestfile = open("ADAStestfile.txt", FILE_READ);
-  char readtestbuf[11];
-  for (int i = 0; i < 11 && ADASdatafile.available(); i++) {
-    if (ADAStestfile.read() != ADASteststring[i]) {
-      ADAS.error = -9;  //File read/write error.
-      close(ADAStestfile); // close even if there is an error
-      return ADAS.error;
-    }
-  }
-  close(ADAStestfile);
-
-  ADAS.error = 0;
-  return ADAS.error; // All tests passed.
-}
-
 void AttachInterrupts() {
   /*
     All interrupts that should be detached for sd card reading/writting
   */
   attachInterrupt(digitalPinToInterrupt(limitswitchpin), ADASzero, FALLING); //Catch interrupts from the encoder.
   attachInterrupt(digitalPinToInterrupt(encoderpinA), ADASpulse, RISING); //Catch interrupts from the encoder.
-  CurieIMU.interrupts(CURIE_IMU_SHOCK);
+//  CurieIMU.interrupts(CURIE_IMU_SHOCK);
 }
 
 void DetachInterrupts() {
@@ -472,7 +368,7 @@ void DetachInterrupts() {
     All interrupts that should be reatached after sd card reading/writting
   */
   detachInterrupt(encoderpinA);
-  CurieIMU.noInterrupts(CURIE_IMU_SHOCK);
+//  CurieIMU.noInterrupts(CURIE_IMU_SHOCK);
   // don't detach watchdog to catch failure in sd card writing
 }
 
@@ -538,16 +434,16 @@ void setup() {
   /* For the altimeter */
   MS5607alt.init();
 
-  CurieIMU.setDetectionDuration(CURIE_IMU_SHOCK, 75);
+  //CurieIMU.setDetectionDuration(CURIE_IMU_SHOCK, 75);
   /* For the built-in Curie IMU */
-  CurieIMU.begin();
-  CurieIMU.setAccelerometerRange(16);
-  CurieIMU.setGyroRate(3200);
-  CurieIMU.setAccelerometerRate(12.5);
+  //CurieIMU.begin();
+  //CurieIMU.setAccelerometerRange(16);
+  //CurieIMU.setGyroRate(3200);
+  //CurieIMU.setAccelerometerRate(12.5);
 
-  CurieIMU.setDetectionThreshold(CURIE_IMU_SHOCK, 1500);
-  CurieIMU.setDetectionDuration(CURIE_IMU_SHOCK, 75);
-  CurieIMU.attachInterrupt(onLaunch);
+  //CurieIMU.setDetectionThreshold(CURIE_IMU_SHOCK, 1500);
+  //CurieIMU.setDetectionDuration(CURIE_IMU_SHOCK, 75);
+  //CurieIMU.attachInterrupt(onLaunch);
   
   
   IMU.initialize();
@@ -597,7 +493,7 @@ void loop() {
   }
   if (ADAS.launched) {
     if (25000 > (millis() - ADAS.launch_time) && (millis() - ADAS.launch_time) > 10000 && ADAS.desiredpos == 0) {
-      ADAS.desiredpos = 100;
+      ADAS.desiredpos = ADAS_MAX_DEPLOY;
     } else if (25000<(millis() - ADAS.launch_time) && ADAS.desiredpos != 0) {
       ADAS.desiredpos = 0;
     }
