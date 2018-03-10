@@ -2,11 +2,10 @@
 
 #include "MS5607/IntersemaBaro.h"
 
-#include <CurieTimerOne.h>
 #include <SPI.h>
 #include <SD.h>
 #include <Wire.h>
-//#include <CurieIMU.h>
+#include <CurieIMU.h>
 #include "MPU6050.h"
 #include "MadgwickAHRS.h"
 
@@ -18,7 +17,7 @@
 #define LAUNCH_THRESHOLD_TIME 200 //(ms)
 #define LAUNCH_THRESHOLD_ACC 4 //(g)
 
-#define WDUS 2000000 //Number of microseconds until watchdog times out and e-stops ADAS. (1000000us = 1s)
+const int IMU_UPDATE = 25;
 
 /* Pin defs */
 const byte hbridgeIN1pin = 2; //h-bridge board pins 2 & 3
@@ -67,19 +66,11 @@ Madgwick filter;
 File ADASdatafile;
 
 void onLaunch() {
-//  CurieIMU.detachInterrupt();
+  CurieIMU.detachInterrupt();
   ADAS.launched = true;
   ADAS.launch_time = millis();
   CurieIMU.detachInterrupt();
   digitalWrite(beeperpin, HIGH);
-
-void ADASWDtimeout() {
-  /* Executed by main watchdog timer if it times out */
-
-  ADAS.inFatalError = true; // emergency stop
-  MotorStop();
-  ADAS.desiredpos = ADAS.pulse_count;
-  ADASbeep(-99); // beep
 }
 
 void ADASbeep(int code) {
@@ -125,17 +116,6 @@ void ADASpulse() {
     using port manipulation but the indirect approach here seems reliable.
   */
 
-  if (ADAS.inFatalError) {
-    MotorStop(); // stop motor entirely
-    ADASbeep(-99); // beep like nothing else
-    return;
-  }
-
-  if (ADAS.inFatalError) { //This is a fatal condition. ADAS must be reset to clear.
-    ADAS.desiredpos = ADAS.pulse_count;
-    ADASbeep(-99);
-    return;
-  }
   ADAS.pulse_count+= ADAS.dir;
 
   if ((ADAS.pulse_count >= (ADAS.desiredpos - ADAS_ERROR)) && (ADAS.pulse_count <= (ADAS.desiredpos + ADAS_ERROR))) {
@@ -154,14 +134,6 @@ void ADASpulse() {
   }
 }
 
-void ADASclose() {
-  /* Closes ADAS all the way. Use for retracting fins after apogee.*/
-
-  if (!digitalRead(limitswitchpin)) { //ADAS is open
-    ADAS.desiredpos = 0 - ADAS_MAX_DEPLOY; //Close ADAS for sure. Relies on the limit switch working.
-  }
-}
-
 void ADASzero() {
   /*
     Stops the motor when the limit switch is engaged
@@ -176,21 +148,8 @@ void ADASmove() {
   /*
     Actually moves the ADAS motor according to ADAS.desiredpos and ADAS.pulse_count.
   */
-  static unsigned int lastmillis = 0;
-  if (ADAS.inFatalError) {
-    MotorStop();
-    ADASbeep(-99);
-    return;
-  }
 
-  if (ADAS.slow) {
-    analogWrite(hbridgeENpin, ADAS_PWM_FREQ);
-  } else {
-    digitalWrite(hbridgeENpin, HIGH);
-  }
-  if (ADAS.dir == 0) {
-    ADAS.slow = false;
-  }
+  digitalWrite(hbridgeENpin, HIGH);
   MotorMove(ADAS.dir);
 }
 
@@ -202,33 +161,13 @@ void ADASupdate() {
     oscillations.
   */
 
-  static unsigned int lastjerk = 0;
 
   ADASmove(); //ADAS won't move unless ADASmove() is called here.
 
-  /*if (ADAS.lastdir != ADAS.dir) { //Prevents sudden changes by setting slow flag.
-    ADAS.jerk = true;
-    ADAS.slow = true;
-    lastjerk =  millis();
-  }
-
-  if ((millis() - lastjerk) >= ADAS_MAX_JERK_TIME && ADAS.jerk == true) {
-    ADAS.slow = false;
-    ADAS.jerk = false;
-  }*/
-
   if (ADAS.pulse_count <= (ADAS.desiredpos - ADAS_ERROR)) { // Need to go forward to achieve target pos.
     ADAS.dir = 1;
-   // ADAS.lastdir = ADAS.dir;
-    if (ADAS.pulse_count >= (ADAS.desiredpos - ADAS_SLOW_THRESH)) { //slow when approaching target
-      ADAS.slow = true;
-    }
   } else if (ADAS.pulse_count >= (ADAS.desiredpos + ADAS_ERROR)) { // Need to go reverse to achieve target pos.
     ADAS.dir = -1;
-    ADAS.lastdir = ADAS.dir;
-    if ( ADAS.pulse_count <= (ADAS.desiredpos + ADAS_SLOW_THRESH)) { //slow when approaching target
-      ADAS.slow = true;
-    }
   }
 }
 
@@ -241,12 +180,16 @@ float convertRawGyro(int gRaw) {
   return g;
 }
 
+/*
+ * Returns the acceleration in m/s^2
+ */
+
 float convertRawAcceleration(int aRaw) {
   // since we are using 2G range
-  // -2g maps to a raw value of -32768
-  // +2g maps to a raw value of 32767
+  // -16g maps to a raw value of -32768
+  // +16g maps to a raw value of 32767
 
-  float a = (aRaw * 16.0) / 32768.0;
+  float a = (aRaw * 16) / (32768.0);
   return a;
 }
 
@@ -280,7 +223,7 @@ void getData(int i) {
 //        ADASdatabuf[4][i],
 //        ADASdatabuf[5][i]
 //    );
-//
+
     int16_t ax, ay, az, gx, gy, gz;
 
     IMU.getMotion6(&ax,
@@ -299,19 +242,20 @@ void getData(int i) {
     ADASdatabuf[4][i] = convertRawGyro(gy);
     ADASdatabuf[5][i] = convertRawGyro(gz);
 
+    float g = 8.39;//for testing
+
     filter.updateIMU(
-      ADASdatabuf[0][i],
-      ADASdatabuf[1][i],
-      ADASdatabuf[2][i],
       ADASdatabuf[3][i],
       ADASdatabuf[4][i],
-      ADASdatabuf[5][i]
+      ADASdatabuf[5][i],
+      ADASdatabuf[0][i]/g,
+      ADASdatabuf[1][i]/g,
+      ADASdatabuf[2][i]/g
     );
 
     ADASdatabuf[6][i] = filter.getPitch();
     ADASdatabuf[7][i] = filter.getRoll();
     ADASdatabuf[8][i] = filter.getYaw();
-
 
 //    ADASdatabuf[9][i] = (CurieIMU.readTemperature() / 512.0 + 23);
 
@@ -324,17 +268,18 @@ void getData(int i) {
     //PID needs the vertical velocity and height
     //9 is vertical velocity
     //10 is vertical position
-    if(!ADAS.launched){
-    } else {
+    //if(!ADAS.launched){
+    //} else {
       float prev_vert_velocity = 0;
       if(i != 0){
         prev_vert_velocity = ADASdatabuf[10][i-1];
       } else {
         prev_vert_velocity = ADASdatabuf[10][9];
       }
-
-      float vertical_acc = (sin(ADASdatabuf[7][i])*ADASdatabuf[0][i]) * 9.81;
-
+      float angle_from_vert = (90+ADASdatabuf[6][i])*3.14159/180;
+      float acc_inline_with_rocket = ADASdatabuf[0][i] + g*sin((ADASdatabuf[6][i])*3.14159/180);
+      float vertical_acc = acc_inline_with_rocket*sin((-ADASdatabuf[6][i])*3.14159/180);
+      
       float prev_t = 0;
       float prev_h = 0;
       if(i != 0){
@@ -345,13 +290,13 @@ void getData(int i) {
         prev_h = ADASdatabuf[11][9];
       }
       float delta_t = (tsbuf[i] - prev_t)/1000; //in seconds
+      float new_vert_height = prev_h + delta_t*prev_vert_velocity;
       float new_vert_velocity = prev_vert_velocity + vertical_acc * delta_t;
-
-      float new_vert_height = prev_h + delta_t*vertical_acc;
-
+      
       ADASdatabuf[10][i] = new_vert_velocity;
       ADASdatabuf[11][i] = new_vert_height;
-    }
+      Serial.println(vertical_acc);
+    //}
 }
 
 
@@ -373,6 +318,7 @@ void writeData() {
   if (ADASdatafile) {
     for (int j = 0; j < 10; j++) { //10 blocks of
       ADASdatafile.print(tsbuf[j]);
+      ADASdatafile.print(",");
        for (int i = 0; i < 12; i++) { //9 sensor outputs + 3 for phun
         ADASdatafile.print(ADASdatabuf[i][j]);
         ADASdatafile.print(",");
@@ -470,6 +416,7 @@ void MotorMove(int direction) {
 void setup() {
 //  BLESerial.setName("ADAS");
 //  BLESerial.begin();
+  Wire.begin();
 
   Serial.begin(9600);
 
@@ -478,20 +425,21 @@ void setup() {
 
   //CurieIMU.setDetectionDuration(CURIE_IMU_SHOCK, 75);
   /* For the built-in Curie IMU */
-  //CurieIMU.begin();
-  //CurieIMU.setAccelerometerRange(16);
-  //CurieIMU.setGyroRate(3200);
-  //CurieIMU.setAccelerometerRate(12.5);
+  CurieIMU.begin();
+  CurieIMU.setAccelerometerRange(16);
+  CurieIMU.setGyroRate(25);//was 3200
+  CurieIMU.setAccelerometerRate(25);//was 12.5
 
-  //CurieIMU.setDetectionThreshold(CURIE_IMU_SHOCK, 1500);
-  //CurieIMU.setDetectionDuration(CURIE_IMU_SHOCK, 75);
-  //CurieIMU.attachInterrupt(onLaunch);
+  CurieIMU.setDetectionThreshold(CURIE_IMU_SHOCK, 1500);
+  CurieIMU.setDetectionDuration(CURIE_IMU_SHOCK, 75);
+  CurieIMU.attachInterrupt(onLaunch);
 
 
   IMU.initialize();
-  IMU.setRate(1600);
+  //IMU.setFullScaleAccelRange(16);
+  IMU.setRate(IMU_UPDATE);
 
-  filter.begin(1600);
+  filter.begin(IMU_UPDATE);
 
   while (!SD.begin(sdpin)) { //Stop everything if we cant see the SD card!
     Serial.println("Card failed or not present.");
@@ -511,17 +459,10 @@ void setup() {
   pinMode(encoderpinA, INPUT); //encoder A (or B... either works).
   pinMode(limitswitchpin, INPUT);
 
-        digitalWrite(hbridgeENpin, HIGH);
+  digitalWrite(hbridgeENpin, HIGH);
 
 
   AttachInterrupts();
-
-  /* Run self-test until pass. */
-//  while (ADAS.error != 0) {
-//    ADASbeep(ADASselftest());
-//  }
-
-  //CurieTimerOne.start(WDUS, &ADASWDtimeout); //Starts watchdog timer.
 }
 
 int loopcount = 0;
@@ -529,8 +470,6 @@ unsigned long prev_time = 0;
 
 void loop() {
   loopcount++;
-  //CurieTimerOne.restart(WDUS); //Restarts watchdog timer.
-  //BLESerial.println("Hello, this is ADAS.");
   getData(loopcount % 10);
   if (loopcount%10 == 0) {
     writeData();
@@ -552,8 +491,7 @@ void loop() {
   }
   ADASupdate();
   //ADASlaunchtest();
-//  Serial.println(ADAS.launched);
-//  Serial.println(ADAS.error);
+
 }
 
 
