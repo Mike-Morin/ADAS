@@ -17,7 +17,7 @@
 #define LAUNCH_THRESHOLD_TIME 200 //(ms)
 #define LAUNCH_THRESHOLD_ACC 4 //(g)
 
-const int IMU_UPDATE = 25;
+const int IMU_UPDATE = 500;
 
 /* Pin defs */
 const byte hbridgeIN1pin = 2; //h-bridge board pins 2 & 3
@@ -49,7 +49,7 @@ typedef struct {
   boolean atLimit = false;     //True when limit switch is hit. Updated by ADASupdate() and ADAShitlimit().
   unsigned int jerktime = 0;    // Time change since last state change. (ms)
   boolean slow = false;         // ADAS is in slow mode.
-  int error = -99;
+  int error = 0;
   boolean inFatalError = false;
   boolean jerk = true;
 } ADASstate;
@@ -66,11 +66,11 @@ Madgwick filter;
 File ADASdatafile;
 
 void onLaunch() {
-  CurieIMU.detachInterrupt();
+  //CurieIMU.detachInterrupt();
   ADAS.launched = true;
   ADAS.launch_time = millis();
-  CurieIMU.detachInterrupt();
-  digitalWrite(beeperpin, HIGH);
+  //CurieIMU.detachInterrupt();
+  //digitalWrite(beeperpin, HIGH);
 }
 
 void ADASbeep(int code) {
@@ -79,11 +79,11 @@ void ADASbeep(int code) {
     positive codes are purely informational
     error code -99 is an extreme error and is indicated by a constant tone
   */
-
+/*
   if (code == -99) { //Motor emergency stop. Beep forever.
     digitalWrite(beeperpin, HIGH);
     return;
-  }
+  }*/
 
   if (code < 0) {
     // Critical Errors are negative
@@ -242,15 +242,16 @@ void getData(int i) {
     ADASdatabuf[4][i] = convertRawGyro(gy);
     ADASdatabuf[5][i] = convertRawGyro(gz);
 
-    float g = 8.39;//for testing
-
+    //Serial.println(sqrt(pow(ADASdatabuf[0][i],2)+pow(ADASdatabuf[1][i],2)+pow(ADASdatabuf[2][i],2)));
+    float a_single_g = 1.08;
+    float g = 9.81; //in m/s^2
     filter.updateIMU(
       ADASdatabuf[3][i],
       ADASdatabuf[4][i],
       ADASdatabuf[5][i],
-      ADASdatabuf[0][i]/g,
-      ADASdatabuf[1][i]/g,
-      ADASdatabuf[2][i]/g
+      ADASdatabuf[0][i],
+      ADASdatabuf[1][i],
+      ADASdatabuf[2][i]
     );
 
     ADASdatabuf[6][i] = filter.getPitch();
@@ -258,18 +259,18 @@ void getData(int i) {
     ADASdatabuf[8][i] = filter.getYaw();
 
 //    ADASdatabuf[9][i] = (CurieIMU.readTemperature() / 512.0 + 23);
-
+    Serial.println(ADASdatabuf[0][i]);
     if (i == 0) { // The altimeter is polled once.
       ADASdatabuf[9][i] = MS5607alt.getHeightCentiMeters();
     } else {
       ADASdatabuf[9][i] = ADASdatabuf[9][i - 1];
     }
-
     //PID needs the vertical velocity and height
     //9 is vertical velocity
     //10 is vertical position
-    //if(!ADAS.launched){
-    //} else {
+    if(!ADAS.launched){
+    } else {
+      //Serial.println("Have launched");
       float prev_vert_velocity = 0;
       if(i != 0){
         prev_vert_velocity = ADASdatabuf[10][i-1];
@@ -277,9 +278,8 @@ void getData(int i) {
         prev_vert_velocity = ADASdatabuf[10][9];
       }
       float angle_from_vert = (90+ADASdatabuf[6][i])*3.14159/180;
-      float acc_inline_with_rocket = ADASdatabuf[0][i] + g*sin((ADASdatabuf[6][i])*3.14159/180);
+      float acc_inline_with_rocket = g*ADASdatabuf[0][i] + g*sin((ADASdatabuf[6][i])*3.14159/180);
       float vertical_acc = acc_inline_with_rocket*sin((-ADASdatabuf[6][i])*3.14159/180);
-      
       float prev_t = 0;
       float prev_h = 0;
       if(i != 0){
@@ -295,8 +295,8 @@ void getData(int i) {
       
       ADASdatabuf[10][i] = new_vert_velocity;
       ADASdatabuf[11][i] = new_vert_height;
-      Serial.println(vertical_acc);
-    //}
+      
+    }
 }
 
 
@@ -348,7 +348,7 @@ void AttachInterrupts() {
   */
   attachInterrupt(digitalPinToInterrupt(limitswitchpin), ADASzero, FALLING); //Catch interrupts from the encoder.
   attachInterrupt(digitalPinToInterrupt(encoderpinA), ADASpulse, RISING); //Catch interrupts from the encoder.
-//  CurieIMU.interrupts(CURIE_IMU_SHOCK);
+  CurieIMU.interrupts(CURIE_IMU_SHOCK);
 }
 
 void DetachInterrupts() {
@@ -356,7 +356,7 @@ void DetachInterrupts() {
     All interrupts that should be reatached after sd card reading/writting
   */
   detachInterrupt(encoderpinA);
-//  CurieIMU.noInterrupts(CURIE_IMU_SHOCK);
+   CurieIMU.noInterrupts(CURIE_IMU_SHOCK);
   // don't detach watchdog to catch failure in sd card writing
 }
 
@@ -413,9 +413,10 @@ void MotorMove(int direction) {
 }
 
 
+
+
 void setup() {
-//  BLESerial.setName("ADAS");
-//  BLESerial.begin();
+
   Wire.begin();
 
   Serial.begin(9600);
@@ -430,13 +431,13 @@ void setup() {
   CurieIMU.setGyroRate(25);//was 3200
   CurieIMU.setAccelerometerRate(25);//was 12.5
 
-  CurieIMU.setDetectionThreshold(CURIE_IMU_SHOCK, 1500);
+  CurieIMU.setDetectionThreshold(CURIE_IMU_SHOCK, 5031.25);
   CurieIMU.setDetectionDuration(CURIE_IMU_SHOCK, 75);
   CurieIMU.attachInterrupt(onLaunch);
 
 
   IMU.initialize();
-  //IMU.setFullScaleAccelRange(16);
+  IMU.setFullScaleAccelRange(3);//max of 16g's
   IMU.setRate(IMU_UPDATE);
 
   filter.begin(IMU_UPDATE);
@@ -465,7 +466,7 @@ void setup() {
   AttachInterrupts();
 }
 
-int loopcount = 0;
+unsigned int loopcount = 0;
 unsigned long prev_time = 0;
 
 void loop() {
