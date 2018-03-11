@@ -1,5 +1,3 @@
-  //#include "BLESerial/BLESerial.h"
-
 #include "MS5607/IntersemaBaro.h"
 
 #include <SPI.h>
@@ -10,7 +8,7 @@
 #include "MadgwickAHRS.h"
 
 #define ADAS_ERROR 2 //Allowed error in ADAS motion due to overshoot. (encoder pulses)
-#define ADAS_MAX_DEPLOY 70 // Max number of ADAS pulses--this is where the fins disengage.(encoder pulses)
+#define ADAS_MAX_DEPLOY 150 // Max number of ADAS pulses--this is where the fins disengage.(encoder pulses)
 
 
 const int IMU_UPDATE = 50;
@@ -22,8 +20,7 @@ const byte limitswitchpin = 4;
 const byte hbridgeENpin = 5;
 const byte hbridgeIN2pin = 6;//h-bridge board pins  1 & 4
 const byte encoderpinA = 7;
-const byte  sdpin = 10; // Also known as SS.
-const byte mpuintpin = 8;
+const byte sdpin = 10; // Also known as SS.
 
 
 /* Pin defs in the SPI library
@@ -40,15 +37,10 @@ typedef struct {
   boolean launched = false;     //Set to true when accelerometer detects launch condition.
   unsigned long launch_time = 0;
   volatile int dir = 0;         //Current ADAS direction.
-  int lastdir = -3;             //Previous ADAS direction.
   volatile int pulse_count = 0; //Current pulse count. Set by interrupt in ADASpulse();
   int desiredpos = 0;           // Set this and run ADASupdate() to move ADAS to that position. (pulses)
-  boolean atLimit = false;     //True when limit switch is hit. Updated by ADASupdate() and ADAShitlimit().
-  unsigned int jerktime = 0;    // Time change since last state change. (ms)
-  boolean slow = false;         // ADAS is in slow mode.
   int error = 0;
   boolean inFatalError = false;
-  boolean jerk = true;
 } ADASstate;
 
 ADASstate ADAS;
@@ -63,11 +55,8 @@ Madgwick filter;
 File ADASdatafile;
 
 void onLaunch() {
-  //CurieIMU.detachInterrupt();
   ADAS.launched = true;
-  ADAS.launch_time = millis();
-  //CurieIMU.detachInterrupt();
-  //digitalWrite(beeperpin, HIGH);
+  ADAS.launch_time =  get_time();
 }
 
 void ADASbeep(int code) {
@@ -76,11 +65,6 @@ void ADASbeep(int code) {
     positive codes are purely informational
     error code -99 is an extreme error and is indicated by a constant tone
   */
-/*
-  if (code == -99) { //Motor emergency stop. Beep forever.
-    digitalWrite(beeperpin, HIGH);
-    return;
-  }*/
 
   if (code < 0) {
     // Critical Errors are negative
@@ -114,8 +98,6 @@ void ADASpulse() {
   */
 
   ADAS.pulse_count+= ADAS.dir;
-  Serial.print("Direction: ");
-  Serial.println(ADAS.dir);
 
   if ((ADAS.pulse_count >= (ADAS.desiredpos - ADAS_ERROR)) && (ADAS.pulse_count <= (ADAS.desiredpos + ADAS_ERROR))) {
     ADAS.dir = 0;
@@ -156,9 +138,6 @@ void ADASupdate() {
   } else if (ADAS.pulse_count >= (ADAS.desiredpos + ADAS_ERROR)) { // Need to go reverse to achieve target pos.
     ADAS.dir = -1;
   }
- // else if (ADAS.pulse_count <= (ADAS.desiredpos + ADAS_ERROR) && ADAS.pulse_count >= (ADAS.desiredpos - ADAS_ERROR)){
-    //ADAS.dir = 0;
-  //}
 }
 
 float convertRawGyro(int gRaw) {
@@ -175,7 +154,7 @@ float convertRawGyro(int gRaw) {
  */
 
 float convertRawAcceleration(int aRaw) {
-  // since we are using 2G range
+  // since we are using 16G range
   // -16g maps to a raw value of -32768
   // +16g maps to a raw value of 32767
 
@@ -206,20 +185,7 @@ void getData(int i) {
 
     tsbuf[i] = get_time();
 
-//    CurieIMU.readAccelerometerScaled(
-//        ADASdatabuf[0][i],
-//        ADASdatabuf[1][i],
-//        ADASdatabuf[2][i]
-//    );
-//
-//    CurieIMU.readGyroScaled(
-//        ADASdatabuf[3][i],
-//        ADASdatabuf[4][i],
-//        ADASdatabuf[5][i]
-//    );
-
     int16_t ax, ay, az, gx, gy, gz;
-   // if(digitalRead(mpuintpin)){
     IMU.getMotion6(&ax,
                    &ay,
                    &az,
@@ -227,7 +193,6 @@ void getData(int i) {
                    &gy,
                    &gz
     );
-   // }
     // convert everything to rational units
     ADASdatabuf[0][i] = convertRawAcceleration(ax);
     ADASdatabuf[1][i] = convertRawAcceleration(ay);
@@ -236,7 +201,6 @@ void getData(int i) {
     ADASdatabuf[4][i] = convertRawGyro(gy);
     ADASdatabuf[5][i] = convertRawGyro(gz);
     
-    //Serial.println(sqrt(pow(ADASdatabuf[0][i],2)+pow(ADASdatabuf[1][i],2)+pow(ADASdatabuf[2][i],2)));
     float g = 9.81; //in m/s^2
     filter.updateIMU(
       ADASdatabuf[3][i],
@@ -251,7 +215,6 @@ void getData(int i) {
     //ADASdatabuf[7][i] = filter.getRoll();
     //ADASdatabuf[8][i] = filter.getYaw();
 
-//    ADASdatabuf[9][i] = (CurieIMU.readTemperature() / 512.0 + 23);
     if(first_time){
       g_feel = sqrt(pow(ADASdatabuf[0][i],2)+pow(ADASdatabuf[1][i],2)+pow(ADASdatabuf[2][i],2));
       g_conv = g/g_feel;
@@ -269,8 +232,7 @@ void getData(int i) {
     //10 is vertical position
     if(!ADAS.launched){
     } else {
-      //Serial.println("Have launched");
-      
+  
       float prev_vert_velocity = 0;
       if(i != 0){
         prev_vert_velocity = ADASdatabuf[10][i-1];
@@ -293,12 +255,6 @@ void getData(int i) {
       float new_vert_height = prev_h + delta_t*prev_vert_velocity;
       float new_vert_velocity = prev_vert_velocity + vertical_acc * delta_t;
       
-      Serial.print("Acc: ");
-      Serial.println(vertical_acc);
-      Serial.print("Vel: ");
-      Serial.println(new_vert_velocity);
-      Serial.print("Height: ");
-      Serial.println(new_vert_height);
       ADASdatabuf[10][i] = new_vert_velocity;
       ADASdatabuf[11][i] = new_vert_height;
       
@@ -311,12 +267,8 @@ void writeData() {
     Writes all the sensor data to SD card
   */
 
-  // TODO: this could probably be simplified and/or be made faster by preformatting the string that is pushed to the sd card
-
   /* Interrupts must be disabled or the SD card
-     will be corrupted upon write. The watchdog
-     is still enabled to stop ADAS if the the SD
-     write locks up.
+     will be corrupted upon write.
   */
 
   ADASdatafile = open("ADASdata.txt", FILE_WRITE);
@@ -378,7 +330,6 @@ File open(char filename[], byte mode) {
   */
 
   // NOTE: motor overshoot can happen
-  //MotorStop();
   DetachInterrupts();
   return SD.open(filename, mode);
 }
@@ -389,7 +340,6 @@ void close(File file) {
   */
   file.close();
   AttachInterrupts();
-  //MotorMove(ADAS.dir);
 }
 
 void MotorStop() {
@@ -435,6 +385,7 @@ void setup() {
   CurieIMU.setGyroRate(25);//was 3200
   CurieIMU.setAccelerometerRate(12.5);//was 12.5
 
+
   CurieIMU.setDetectionThreshold(CURIE_IMU_SHOCK, 5031.25);
   CurieIMU.setDetectionDuration(CURIE_IMU_SHOCK, 75);
   CurieIMU.attachInterrupt(onLaunch);
@@ -450,7 +401,6 @@ void setup() {
   while (!SD.begin(sdpin)) { //Stop everything if we cant see the SD card!
     Serial.println("Card failed or not present.");
     ADASbeep(-1);
-    // delay(1000); already blocked for at least 1 second by the beeping
   }
 
   Serial.println("Card OK");
@@ -463,17 +413,14 @@ void setup() {
   pinMode(hbridgeIN2pin, OUTPUT); //hbridge IN2
   pinMode(hbridgeENpin, OUTPUT); //hbridge EN pin for pwm
   pinMode(encoderpinA, INPUT); //encoder A (or B... either works).
-  pinMode(mpuintpin,INPUT);
 
   digitalWrite(hbridgeENpin, HIGH);
-
 
   AttachInterrupts();
 }
 
 unsigned int loopcount = 0;
-unsigned long prev_time = 0;
-int deployment[] = {0,70,10,50,22,50,26,50,45,50};
+float height_diff = 1;
 
 void loop() {
   loopcount++;
@@ -481,38 +428,27 @@ void loop() {
   if (loopcount%10 == 0) {
     writeData();
   }
-  if(loopcount%200 == 0 && loopcount < 200*10){
-    ADAS.desiredpos = deployment[(int)(loopcount/200)];
-  }
-  if(loopcount > 200*10){
-    ADAS.desiredpos = 0;
-  }
-  
-  Serial.print(ADAS.desiredpos);
-  Serial.print("        ");
-  Serial.print(ADAS.pulse_count);
-  Serial.print("        ");
-  Serial.println(loopcount);
-  /*
+
   if (ADAS.launched) {
 
-    float prev_deployment = ADAS.desiredpos/ADAS_MAX_DEPLOY;  //the ratio of the previous deployment to full deployment
+    float prev_deployment = (float)(ADAS.desiredpos)/ADAS_MAX_DEPLOY;  //the ratio of the previous deployment to full deployment
     float cur_time = tsbuf[loopcount%10]/1000; //in seconds
     float velocity = ADASdatabuf[10][loopcount%10];
     float height = ADASdatabuf[11][loopcount%10];
 
+    float prev_time;
+    if(loopcount%10 == 0){
+      prev_time = tsbuf[9];
+    } else{
+      prev_time = tsbuf[loopcount%10-1];
+    }
+
     float time_diff = cur_time - prev_time;
     float new_ADAS_deployment = PID(height, velocity, prev_deployment, time_diff);
-    //update the actual ADAS deployment
 
     ADAS.desiredpos = (int) (new_ADAS_deployment*ADAS_MAX_DEPLOY);
-
-    prev_time = cur_time;
   }
-  */
   ADASupdate();
-  //ADASlaunchtest();
-
 }
 
 
@@ -580,7 +516,7 @@ double calc_velocity(float height){
   while (height > start_heights[function_index] && function_index < sizeof(start_heights)/sizeof(int)){
     function_index++;
   }
-  if(function_index == sizeof(start_heights)/sizeof(double)){
+  if(function_index >= sizeof(start_heights)/sizeof(double)){
     return 0; //retract fins
   }
   int order = sizeof(velocity_functions[function_index])/sizeof(double)-1;
@@ -597,8 +533,12 @@ double calc_velocity(float height){
 float PID(float my_height, float my_velocity, float prev_signal, float delta_t){
 
   float wanted_velocity = (float) (calc_velocity(my_height));
-  float cur_signal = (my_velocity-wanted_velocity)*signal_to_ADAS_ratio;//converted to a number between 0 and 1 ish so that its comparable to prev_signal
 
+  if(wanted_velocity == 0){
+    return 0;
+  }
+  
+  float cur_signal = (my_velocity-wanted_velocity)*signal_to_ADAS_ratio;//converted to a number between 0 and 1 ish so that its comparable to prev_signal
   float deriv_signal = (cur_signal-prev_signal)/delta_t*signal_to_ADAS_ratio; //cur_sig-prev_sig is approx between 0 and 1, divided by delta t is on the order of 100-1000 so multiply by ///////////NEEED TO FIND TEH FREQUENCY TO MAKE THIS GUUUUUDD
   //don't do integral control for now, not worth it and isn't effective
 
