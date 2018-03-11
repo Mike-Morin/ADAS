@@ -9,13 +9,9 @@
 #include "MPU6050.h"
 #include "MadgwickAHRS.h"
 
-#define ADAS_ERROR 1 //Allowed error in ADAS motion due to overshoot. (encoder pulses)
-#define ADAS_SLOW_THRESH 10 // Number of pulses away from target at which ADAS slows down. (encoder pulses)
-#define ADAS_MAX_JERK_TIME 500 // Amount of time ADAS slowing is to be applied before jerk condition is cleared. (milliseconds)
+#define ADAS_ERROR 2 //Allowed error in ADAS motion due to overshoot. (encoder pulses)
 #define ADAS_MAX_DEPLOY 70 // Max number of ADAS pulses--this is where the fins disengage.(encoder pulses)
-#define ADAS_PWM_FREQ 255 // PWM frequency for slow condition. (#/255)
-#define LAUNCH_THRESHOLD_TIME 200 //(ms)
-#define LAUNCH_THRESHOLD_ACC 4 //(g)
+
 
 const int IMU_UPDATE = 50;
 
@@ -26,7 +22,8 @@ const byte limitswitchpin = 4;
 const byte hbridgeENpin = 5;
 const byte hbridgeIN2pin = 6;//h-bridge board pins  1 & 4
 const byte encoderpinA = 7;
-const int  sdpin = 10; // Also known as SS.
+const byte  sdpin = 10; // Also known as SS.
+const byte mpuintpin = 8;
 
 
 /* Pin defs in the SPI library
@@ -159,9 +156,9 @@ void ADASupdate() {
   } else if (ADAS.pulse_count >= (ADAS.desiredpos + ADAS_ERROR)) { // Need to go reverse to achieve target pos.
     ADAS.dir = -1;
   }
-  else if (ADAS.pulse_count <= (ADAS.desiredpos + ADAS_ERROR) && ADAS.pulse_count >= (ADAS.desiredpos - ADAS_ERROR)){
-    ADAS.dir = 0;
-  }
+ // else if (ADAS.pulse_count <= (ADAS.desiredpos + ADAS_ERROR) && ADAS.pulse_count >= (ADAS.desiredpos - ADAS_ERROR)){
+    //ADAS.dir = 0;
+  //}
 }
 
 float convertRawGyro(int gRaw) {
@@ -222,7 +219,7 @@ void getData(int i) {
 //    );
 
     int16_t ax, ay, az, gx, gy, gz;
-
+   // if(digitalRead(mpuintpin)){
     IMU.getMotion6(&ax,
                    &ay,
                    &az,
@@ -230,7 +227,7 @@ void getData(int i) {
                    &gy,
                    &gz
     );
-
+   // }
     // convert everything to rational units
     ADASdatabuf[0][i] = convertRawAcceleration(ax);
     ADASdatabuf[1][i] = convertRawAcceleration(ay);
@@ -263,7 +260,7 @@ void getData(int i) {
     
     if (i == 0) { // The altimeter is polled once and the mpu6050 fifo is cleared.
       IMU.resetFIFO();
-     // ADASdatabuf[9][i] = MS5607alt.getHeightCentiMeters();
+      ADASdatabuf[9][i] = MS5607alt.getHeightCentiMeters();
     } else {
       ADASdatabuf[9][i] = ADASdatabuf[9][i - 1];
     }
@@ -381,7 +378,7 @@ File open(char filename[], byte mode) {
   */
 
   // NOTE: motor overshoot can happen
-  MotorStop();
+  //MotorStop();
   DetachInterrupts();
   return SD.open(filename, mode);
 }
@@ -392,7 +389,7 @@ void close(File file) {
   */
   file.close();
   AttachInterrupts();
-  MotorMove(ADAS.dir);
+  //MotorMove(ADAS.dir);
 }
 
 void MotorStop() {
@@ -446,6 +443,7 @@ void setup() {
   IMU.initialize();
   IMU.setFullScaleAccelRange(3);//max of 16g's
   IMU.setRate(IMU_UPDATE);
+  IMU.getIntDataReadyEnabled();
 
   filter.begin(IMU_UPDATE);
 
@@ -465,8 +463,9 @@ void setup() {
   pinMode(hbridgeIN2pin, OUTPUT); //hbridge IN2
   pinMode(hbridgeENpin, OUTPUT); //hbridge EN pin for pwm
   pinMode(encoderpinA, INPUT); //encoder A (or B... either works).
+  pinMode(mpuintpin,INPUT);
 
-  analogWrite(hbridgeENpin, 200);
+  digitalWrite(hbridgeENpin, HIGH);
 
 
   AttachInterrupts();
