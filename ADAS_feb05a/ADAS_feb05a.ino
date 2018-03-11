@@ -159,6 +159,9 @@ void ADASupdate() {
   } else if (ADAS.pulse_count >= (ADAS.desiredpos + ADAS_ERROR)) { // Need to go reverse to achieve target pos.
     ADAS.dir = -1;
   }
+  else if (ADAS.pulse_count <= (ADAS.desiredpos + ADAS_ERROR) && ADAS.pulse_count >= (ADAS.desiredpos - ADAS_ERROR)){
+    ADAS.dir = 0;
+  }
 }
 
 float convertRawGyro(int gRaw) {
@@ -248,8 +251,8 @@ void getData(int i) {
     );
 
     ADASdatabuf[6][i] = filter.getPitch();
-    ADASdatabuf[7][i] = filter.getRoll();
-    ADASdatabuf[8][i] = filter.getYaw();
+    //ADASdatabuf[7][i] = filter.getRoll();
+    //ADASdatabuf[8][i] = filter.getYaw();
 
 //    ADASdatabuf[9][i] = (CurieIMU.readTemperature() / 512.0 + 23);
     if(first_time){
@@ -258,8 +261,9 @@ void getData(int i) {
       first_time = false;
     }
     
-    if (i == 0) { // The altimeter is polled once.
-      ADASdatabuf[9][i] = MS5607alt.getHeightCentiMeters();
+    if (i == 0) { // The altimeter is polled once and the mpu6050 fifo is cleared.
+      IMU.resetFIFO();
+     // ADASdatabuf[9][i] = MS5607alt.getHeightCentiMeters();
     } else {
       ADASdatabuf[9][i] = ADASdatabuf[9][i - 1];
     }
@@ -432,7 +436,7 @@ void setup() {
   CurieIMU.begin();
   CurieIMU.setAccelerometerRange(16);
   CurieIMU.setGyroRate(25);//was 3200
-  CurieIMU.setAccelerometerRate(25);//was 12.5
+  CurieIMU.setAccelerometerRate(12.5);//was 12.5
 
   CurieIMU.setDetectionThreshold(CURIE_IMU_SHOCK, 5031.25);
   CurieIMU.setDetectionDuration(CURIE_IMU_SHOCK, 75);
@@ -474,14 +478,14 @@ int deployment[] = {0,70,10,50,22,50,26,50,45,50};
 
 void loop() {
   loopcount++;
- // getData(loopcount % 10);
+  getData(loopcount % 10);
   if (loopcount%10 == 0) {
- //   writeData();
+    writeData();
   }
-  if(loopcount%2000 == 0 && loopcount < 2000*10){
-    ADAS.desiredpos = deployment[(int)(loopcount/2000)];
+  if(loopcount%200 == 0 && loopcount < 200*10){
+    ADAS.desiredpos = deployment[(int)(loopcount/200)];
   }
-  if(loopcount > 2000*10){
+  if(loopcount > 200*10){
     ADAS.desiredpos = 0;
   }
   
