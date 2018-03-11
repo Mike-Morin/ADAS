@@ -12,12 +12,12 @@
 #define ADAS_ERROR 1 //Allowed error in ADAS motion due to overshoot. (encoder pulses)
 #define ADAS_SLOW_THRESH 10 // Number of pulses away from target at which ADAS slows down. (encoder pulses)
 #define ADAS_MAX_JERK_TIME 500 // Amount of time ADAS slowing is to be applied before jerk condition is cleared. (milliseconds)
-#define ADAS_MAX_DEPLOY 50 // Max number of ADAS pulses--this is where the fins disengage.(encoder pulses)
+#define ADAS_MAX_DEPLOY 70 // Max number of ADAS pulses--this is where the fins disengage.(encoder pulses)
 #define ADAS_PWM_FREQ 255 // PWM frequency for slow condition. (#/255)
 #define LAUNCH_THRESHOLD_TIME 200 //(ms)
 #define LAUNCH_THRESHOLD_ACC 4 //(g)
 
-const int IMU_UPDATE = 500;
+const int IMU_UPDATE = 50;
 
 /* Pin defs */
 const byte hbridgeIN1pin = 2; //h-bridge board pins 2 & 3
@@ -117,39 +117,29 @@ void ADASpulse() {
   */
 
   ADAS.pulse_count+= ADAS.dir;
+  Serial.print("Direction: ");
+  Serial.println(ADAS.dir);
 
   if ((ADAS.pulse_count >= (ADAS.desiredpos - ADAS_ERROR)) && (ADAS.pulse_count <= (ADAS.desiredpos + ADAS_ERROR))) {
     ADAS.dir = 0;
     digitalWrite(hbridgeIN1pin, HIGH);
     digitalWrite(hbridgeIN2pin, HIGH);
-    digitalWrite(hbridgeENpin, LOW);
-
   }
   if (ADAS.pulse_count >= ADAS_MAX_DEPLOY) {
     ADAS.dir = 0;
     ADAS.desiredpos = ADAS_MAX_DEPLOY;
     digitalWrite(hbridgeIN1pin, HIGH);
     digitalWrite(hbridgeIN2pin, HIGH);
-    digitalWrite(hbridgeENpin, LOW);
   }
 }
 
-void ADASzero() {
-  /*
-    Stops the motor when the limit switch is engaged
-    called on interupt from optical limit switch
-  */
-  Serial.println("Limit Switch Triggered");
-  ADAS.pulse_count = 0;
-  MotorStop();
-}
+
 
 void ADASmove() {
   /*
     Actually moves the ADAS motor according to ADAS.desiredpos and ADAS.pulse_count.
   */
 
-  digitalWrite(hbridgeENpin, HIGH);
   MotorMove(ADAS.dir);
 }
 
@@ -203,6 +193,10 @@ unsigned long get_time() {
   return ts;
 }
 
+boolean first_time = true;
+float g_feel;
+float g_conv;
+
 void getData(int i) {
   /*
     Polls all the sensors and puts the data in the ADASdatabuf.
@@ -241,9 +235,8 @@ void getData(int i) {
     ADASdatabuf[3][i] = convertRawGyro(gx);
     ADASdatabuf[4][i] = convertRawGyro(gy);
     ADASdatabuf[5][i] = convertRawGyro(gz);
-
+    
     //Serial.println(sqrt(pow(ADASdatabuf[0][i],2)+pow(ADASdatabuf[1][i],2)+pow(ADASdatabuf[2][i],2)));
-    float a_single_g = 1.08;
     float g = 9.81; //in m/s^2
     filter.updateIMU(
       ADASdatabuf[3][i],
@@ -259,7 +252,12 @@ void getData(int i) {
     ADASdatabuf[8][i] = filter.getYaw();
 
 //    ADASdatabuf[9][i] = (CurieIMU.readTemperature() / 512.0 + 23);
-    Serial.println(ADASdatabuf[0][i]);
+    if(first_time){
+      g_feel = sqrt(pow(ADASdatabuf[0][i],2)+pow(ADASdatabuf[1][i],2)+pow(ADASdatabuf[2][i],2));
+      g_conv = g/g_feel;
+      first_time = false;
+    }
+    
     if (i == 0) { // The altimeter is polled once.
       ADASdatabuf[9][i] = MS5607alt.getHeightCentiMeters();
     } else {
@@ -271,15 +269,16 @@ void getData(int i) {
     if(!ADAS.launched){
     } else {
       //Serial.println("Have launched");
+      
       float prev_vert_velocity = 0;
       if(i != 0){
         prev_vert_velocity = ADASdatabuf[10][i-1];
       } else {
         prev_vert_velocity = ADASdatabuf[10][9];
       }
-      float angle_from_vert = (90+ADASdatabuf[6][i])*3.14159/180;
-      float acc_inline_with_rocket = g*ADASdatabuf[0][i] + g*sin((ADASdatabuf[6][i])*3.14159/180);
+      float acc_inline_with_rocket = g_conv*ADASdatabuf[0][i] + g*sin((ADASdatabuf[6][i])*3.14159/180);
       float vertical_acc = acc_inline_with_rocket*sin((-ADASdatabuf[6][i])*3.14159/180);
+      
       float prev_t = 0;
       float prev_h = 0;
       if(i != 0){
@@ -293,6 +292,12 @@ void getData(int i) {
       float new_vert_height = prev_h + delta_t*prev_vert_velocity;
       float new_vert_velocity = prev_vert_velocity + vertical_acc * delta_t;
       
+      Serial.print("Acc: ");
+      Serial.println(vertical_acc);
+      Serial.print("Vel: ");
+      Serial.println(new_vert_velocity);
+      Serial.print("Height: ");
+      Serial.println(new_vert_height);
       ADASdatabuf[10][i] = new_vert_velocity;
       ADASdatabuf[11][i] = new_vert_height;
       
@@ -346,7 +351,6 @@ void AttachInterrupts() {
   /*
     All interrupts that should be detached for sd card reading/writting
   */
-  attachInterrupt(digitalPinToInterrupt(limitswitchpin), ADASzero, FALLING); //Catch interrupts from the encoder.
   attachInterrupt(digitalPinToInterrupt(encoderpinA), ADASpulse, RISING); //Catch interrupts from the encoder.
   CurieIMU.interrupts(CURIE_IMU_SHOCK);
 }
@@ -398,8 +402,7 @@ void MotorMove(int direction) {
     0 = stop
     1 = forwards
   */
-    digitalWrite(hbridgeENpin, HIGH);
-
+  
   if (direction == 1) { //forward
     digitalWrite(hbridgeIN1pin, HIGH);
     digitalWrite(hbridgeIN2pin, LOW);
@@ -458,9 +461,8 @@ void setup() {
   pinMode(hbridgeIN2pin, OUTPUT); //hbridge IN2
   pinMode(hbridgeENpin, OUTPUT); //hbridge EN pin for pwm
   pinMode(encoderpinA, INPUT); //encoder A (or B... either works).
-  pinMode(limitswitchpin, INPUT);
 
-  digitalWrite(hbridgeENpin, HIGH);
+  analogWrite(hbridgeENpin, 200);
 
 
   AttachInterrupts();
@@ -468,13 +470,27 @@ void setup() {
 
 unsigned int loopcount = 0;
 unsigned long prev_time = 0;
+int deployment[] = {0,70,10,50,22,50,26,50,45,50};
 
 void loop() {
   loopcount++;
-  getData(loopcount % 10);
+ // getData(loopcount % 10);
   if (loopcount%10 == 0) {
-    writeData();
+ //   writeData();
   }
+  if(loopcount%2000 == 0 && loopcount < 2000*10){
+    ADAS.desiredpos = deployment[(int)(loopcount/2000)];
+  }
+  if(loopcount > 2000*10){
+    ADAS.desiredpos = 0;
+  }
+  
+  Serial.print(ADAS.desiredpos);
+  Serial.print("        ");
+  Serial.print(ADAS.pulse_count);
+  Serial.print("        ");
+  Serial.println(loopcount);
+  /*
   if (ADAS.launched) {
 
     float prev_deployment = ADAS.desiredpos/ADAS_MAX_DEPLOY;  //the ratio of the previous deployment to full deployment
@@ -490,6 +506,7 @@ void loop() {
 
     prev_time = cur_time;
   }
+  */
   ADASupdate();
   //ADASlaunchtest();
 
