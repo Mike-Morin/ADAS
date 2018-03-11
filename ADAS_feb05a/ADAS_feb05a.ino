@@ -414,7 +414,7 @@ void setup() {
   pinMode(hbridgeENpin, OUTPUT); //hbridge EN pin for pwm
   pinMode(encoderpinA, INPUT); //encoder A (or B... either works).
 
-  digitalWrite(hbridgeENpin, HIGH);
+  digitalWrite(hbridgeENpin, HIGH);  //SUPER IMPORTANT.
 
   AttachInterrupts();
 }
@@ -427,6 +427,10 @@ void loop() {
   getData(loopcount % 10);
   if (loopcount%10 == 0) {
     writeData();
+  }
+
+  if(!ADAS.launched){
+    ADASbeep(3);
   }
 
   if (ADAS.launched) {
