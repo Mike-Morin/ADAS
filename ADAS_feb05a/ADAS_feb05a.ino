@@ -320,7 +320,7 @@ void setup() {
   pinMode(hbridgeIN2pin, OUTPUT); //hbridge IN2
   pinMode(hbridgeENpin, OUTPUT); //hbridge EN pin for pwm
   pinMode(encoderpinA, INPUT); //encoder A (or B... either works).
-
+  pinMode(beeperpin, OUTPUT);
   digitalWrite(hbridgeENpin, HIGH);  //SUPER IMPORTANT.
 
   AttachInterrupts();
@@ -337,10 +337,10 @@ void loop() {
   }
 
   if(!ADAS.isLaunched()){
-    ADASbeep(3);
+    digitalWrite(beeperpin, HIGH);
   }
   if (ADAS.isLaunched()) {
-
+    digitalWrite(beeperpin, LOW);
     float prev_deployment = (float)(ADAS.getPos())/ADAS_MAX_DEPLOY;  //the ratio of the previous deployment to full deployment
     float cur_time = tsbuf[loopcount%10]/1000; //in seconds
     float velocity = ADASdatabuf[10][loopcount%10];
