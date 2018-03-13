@@ -6,10 +6,7 @@
 #include <CurieIMU.h>
 #include "MPU6050.h"
 #include "MadgwickAHRS.h"
-
-#define ADAS_ERROR 2 //Allowed error in ADAS motion due to overshoot. (encoder pulses)
-#define ADAS_MAX_DEPLOY 150 // Max number of ADAS pulses--this is where the fins disengage.(encoder pulses)
-
+#include "ADAS.h"
 
 const int IMU_UPDATE = 50;
 
@@ -33,17 +30,9 @@ const byte sdpin = 10; // Also known as SS.
 
 
 /* ADAS variables */
-typedef struct {
-  boolean launched = false;     //Set to true when accelerometer detects launch condition.
-  unsigned long launch_time = 0;
-  volatile int dir = 0;         //Current ADAS direction.
-  volatile int pulse_count = 0; //Current pulse count. Set by interrupt in ADASpulse();
-  int desiredpos = 0;           // Set this and run ADASupdate() to move ADAS to that position. (pulses)
-  int error = 0;
-  boolean inFatalError = false;
-} ADASstate;
 
-ADASstate ADAS;
+ADAS_state ADAS;
+
 /* Data variables */
 unsigned long tsbuf[10];
 float ADASdatabuf[12][10];
@@ -53,11 +42,6 @@ MPU6050 IMU;
 Madgwick filter;
 
 File ADASdatafile;
-
-void onLaunch() {
-  ADAS.launched = true;
-  ADAS.launch_time =  get_time();
-}
 
 void ADASbeep(int code) {
   /*
@@ -88,57 +72,6 @@ void ADASbeep(int code) {
   }
 }
 
-void ADASpulse() {
-  /*
-    Whenever a pulse is detected, an interrupt is triggered and this function executes.
-    The direction is set by the ADASupdate() function. Using both encoders would allow
-    us to measure ADAS direction directly, but the pulses from both encoders must be
-    compared. This is so slow that it was introducing weirdness. We could try again
-    using port manipulation but the indirect approach here seems reliable.
-  */
-
-  ADAS.pulse_count+= ADAS.dir;
-
-  if ((ADAS.pulse_count >= (ADAS.desiredpos - ADAS_ERROR)) && (ADAS.pulse_count <= (ADAS.desiredpos + ADAS_ERROR))) {
-    ADAS.dir = 0;
-    digitalWrite(hbridgeIN1pin, HIGH);
-    digitalWrite(hbridgeIN2pin, HIGH);
-  }
-  if (ADAS.pulse_count >= ADAS_MAX_DEPLOY) {
-    ADAS.dir = 0;
-    ADAS.desiredpos = ADAS_MAX_DEPLOY;
-    digitalWrite(hbridgeIN1pin, HIGH);
-    digitalWrite(hbridgeIN2pin, HIGH);
-  }
-}
-
-
-
-void ADASmove() {
-  /*
-    Actually moves the ADAS motor according to ADAS.desiredpos and ADAS.pulse_count.
-  */
-
-  MotorMove(ADAS.dir);
-}
-
-
-void ADASupdate() {
-  /*
-    Moves ADAS according to ADAS.desiredpos. Incorporates hysteresis via ADAS_ERROR
-    so the motor doesn't overshoot its target position and go into violent
-    oscillations.
-  */
-
-
-  ADASmove(); //ADAS won't move unless ADASmove() is called here.
-
-  if (ADAS.pulse_count <= (ADAS.desiredpos - ADAS_ERROR)) { // Need to go forward to achieve target pos.
-    ADAS.dir = 1;
-  } else if (ADAS.pulse_count >= (ADAS.desiredpos + ADAS_ERROR)) { // Need to go reverse to achieve target pos.
-    ADAS.dir = -1;
-  }
-}
 
 float convertRawGyro(int gRaw) {
   // since we are using 250 degrees/seconds range
@@ -230,7 +163,7 @@ void getData(int i) {
     //PID needs the vertical velocity and height
     //9 is vertical velocity
     //10 is vertical position
-    if(!ADAS.launched){
+    if(!ADAS.isLaunched()){
     } else {
 
       float prev_vert_velocity = 0;
@@ -281,20 +214,20 @@ void writeData() {
         ADASdatafile.print(ADASdatabuf[i][j]);
         ADASdatafile.print(",");
       }
-      ADASdatafile.print(ADAS.launched);
+      ADASdatafile.print(ADAS.isLaunched());
       ADASdatafile.print(",");
-      ADASdatafile.print(ADAS.pulse_count);
+      ADASdatafile.print(ADAS.getPulseCount());
       ADASdatafile.print(",");
-      ADASdatafile.print(ADAS.desiredpos);
+      ADASdatafile.print(ADAS.getPos());
       ADASdatafile.print(",");
-      ADASdatafile.print(ADAS.dir);
+      ADASdatafile.print(ADAS.getDir());
       ADASdatafile.print("\n");
     }
   } else {
     // if the file didn't open, print an error:
     // NOTE: this doesnt do much in the air
     Serial.println("error opening test.txt");
-    ADAS.error = -9;
+    ADAS.setError(-9);
     ADASbeep(-9);
   }
   close(ADASdatafile);
@@ -304,7 +237,7 @@ void AttachInterrupts() {
   /*
     All interrupts that should be detached for sd card reading/writting
   */
-  attachInterrupt(digitalPinToInterrupt(encoderpinA), ADASpulse, RISING); //Catch interrupts from the encoder.
+  attachInterrupt(digitalPinToInterrupt(encoderpinA), ADAS.pulse, RISING); //Catch interrupts from the encoder.
   CurieIMU.interrupts(CURIE_IMU_SHOCK);
 }
 
@@ -342,38 +275,12 @@ void close(File file) {
   AttachInterrupts();
 }
 
-void MotorStop() {
-  MotorMove(0);
-}
-
-void MotorMove(int direction) {
-  /*
-    moves motor in a direction given by the direction flag
-    -1 = backwards
-    0 = stop
-    1 = forwards
-  */
-
-  if (direction == 1) { //forward
-    digitalWrite(hbridgeIN1pin, HIGH);
-    digitalWrite(hbridgeIN2pin, LOW);
-  } else if (direction == -1) { //reverse
-    digitalWrite(hbridgeIN1pin, LOW);
-    digitalWrite(hbridgeIN2pin, HIGH);
-  } else if (direction == 0) { // STOP
-    digitalWrite(hbridgeIN1pin, HIGH);
-    digitalWrite(hbridgeIN2pin, HIGH);
-  }
-}
-
-
-
-
 void setup() {
 
   Wire.begin();
-
   Serial.begin(9600);
+
+  ADAS = ADAS_state(hbridgeIN1pin, hbridgeIN2pin);
 
   /* For the altimeter */
   MS5607alt.init();
@@ -429,13 +336,12 @@ void loop() {
     writeData();
   }
 
-  if(!ADAS.launched){
+  if(!ADAS.isLaunched()){
     ADASbeep(3);
   }
+  if (ADAS.isLaunched()) {
 
-  if (ADAS.launched) {
-
-    float prev_deployment = (float)(ADAS.desiredpos)/ADAS_MAX_DEPLOY;  //the ratio of the previous deployment to full deployment
+    float prev_deployment = (float)(ADAS.getPos())/ADAS_MAX_DEPLOY;  //the ratio of the previous deployment to full deployment
     float cur_time = tsbuf[loopcount%10]/1000; //in seconds
     float velocity = ADASdatabuf[10][loopcount%10];
     float height = ADASdatabuf[11][loopcount%10];
@@ -450,9 +356,9 @@ void loop() {
     float time_diff = cur_time - prev_time;
     float new_ADAS_deployment = PID(height, velocity, prev_deployment, time_diff);
 
-    ADAS.desiredpos = (int) (new_ADAS_deployment*ADAS_MAX_DEPLOY);
+    ADAS.setPos((int) (new_ADAS_deployment*ADAS_MAX_DEPLOY));
   }
-  ADASupdate();
+  ADAS.update();
 }
 
 
