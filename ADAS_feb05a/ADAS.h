@@ -1,12 +1,16 @@
 #ifndef ADAS_h
 #define ADAS_h
 # include "Arduino.h"
+
+
 class ADAS_state {
   bool launched, inFatalError;
   unsigned long launch_time;
   int dir, pulse_count, error, desired_pos;
   int hbridge1, hbridge2;
   public:
+    ADAS_state();
+    ADAS_state(int, int);
     void setLaunched();
     bool isLaunched();
     unsigned long getLaunchTime();
@@ -22,6 +26,9 @@ class ADAS_state {
     void move();
     void move(int direction);
     void update();
+    const int MAX_POS = 150;
+
+
 };
 
 #endif

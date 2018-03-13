@@ -1,9 +1,9 @@
 #include "Arduino.h"
+#include "ADAS.h"
 
-const int MAX_POS = 150;
 const int ERROR = 2;
-
-ADAS_state:ADAS_state(int hbridge1_pin, int hbridge2_pin) {
+ADAS_state::ADAS_state() {};
+ADAS_state::ADAS_state(int hbridge1_pin, int hbridge2_pin) {
   hbridge1 = hbridge1_pin;
   hbridge2 = hbridge2_pin;
   pinMode(hbridge1, OUTPUT);
@@ -20,7 +20,7 @@ bool ADAS_state::isLaunched() {
 }
 
 unsigned long ADAS_state::getLaunchTime() {
-  return launch_time();
+  return launch_time;
 }
 
 void ADAS_state::setDir(int dir) {
@@ -41,7 +41,7 @@ void ADAS_state::zeroPulseCount() {
   pulse_count = 0;
 }
 
-void ADAS_state::getError() {
+int ADAS_state::getError() {
   return error;
 }
 
@@ -66,7 +66,7 @@ void ADAS_state::onPulse() {
     dir = 0;
     desired_pos = MAX_POS;
     digitalWrite(hbridge1, HIGH);
-    digtialWrite(hbridge1, HIGH);
+    digitalWrite(hbridge1, HIGH);
   }
 }
 
@@ -83,7 +83,7 @@ void ADAS_state::move(int direction) {
     digitalWrite(hbridge2, HIGH);
   } else if (direction == 0) {
     digitalWrite(hbridge1, HIGH);
-    digitalWrite(hbridge2, LOW)
+    digitalWrite(hbridge2, HIGH);
   }
 }
 

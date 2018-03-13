@@ -31,7 +31,7 @@ const byte sdpin = 10; // Also known as SS.
 
 /* ADAS variables */
 
-ADAS_state ADAS;
+ADAS_state ADAS(hbridgeIN1pin, hbridgeIN2pin);
 
 /* Data variables */
 unsigned long tsbuf[10];
@@ -232,12 +232,18 @@ void writeData() {
   }
   close(ADASdatafile);
 }
+void onEncoderPulse() {
+  ADAS.onPulse();
+}
+void onLaunch() {
+  ADAS.setLaunched();  
+}
 
 void AttachInterrupts() {
   /*
     All interrupts that should be detached for sd card reading/writting
   */
-  attachInterrupt(digitalPinToInterrupt(encoderpinA), ADAS.pulse, RISING); //Catch interrupts from the encoder.
+  attachInterrupt(digitalPinToInterrupt(encoderpinA), onEncoderPulse, RISING); //Catch interrupts from the encoder.
   CurieIMU.interrupts(CURIE_IMU_SHOCK);
 }
 
@@ -279,8 +285,6 @@ void setup() {
 
   Wire.begin();
   Serial.begin(9600);
-
-  ADAS = ADAS_state(hbridgeIN1pin, hbridgeIN2pin);
 
   /* For the altimeter */
   MS5607alt.init();
@@ -341,7 +345,7 @@ void loop() {
   }
   if (ADAS.isLaunched()) {
     digitalWrite(beeperpin, LOW);
-    float prev_deployment = (float)(ADAS.getPos())/ADAS_MAX_DEPLOY;  //the ratio of the previous deployment to full deployment
+    float prev_deployment = (float)(ADAS.getPos())/ADAS.MAX_POS;  //the ratio of the previous deployment to full deployment
     float cur_time = tsbuf[loopcount%10]/1000; //in seconds
     float velocity = ADASdatabuf[10][loopcount%10];
     float height = ADASdatabuf[11][loopcount%10];
@@ -356,7 +360,7 @@ void loop() {
     float time_diff = cur_time - prev_time;
     float new_ADAS_deployment = PID(height, velocity, prev_deployment, time_diff);
 
-    ADAS.setPos((int) (new_ADAS_deployment*ADAS_MAX_DEPLOY));
+    ADAS.setPos((int) (new_ADAS_deployment*ADAS.MAX_POS));
   }
   ADAS.update();
 }
