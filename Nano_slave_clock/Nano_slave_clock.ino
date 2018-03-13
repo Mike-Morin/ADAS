@@ -5,7 +5,7 @@ void setup() {
 
   // put your setup code here, to run once:
   Wire.begin(9);                // join i2c bus with address #9
-  Wire.setClock(10000); 
+  Wire.setClock(10000);
   Wire.onRequest(requestEvent); // register event
 
 
@@ -19,7 +19,7 @@ void loop() {
 }
 
 void requestEvent() {
- // Wire.write(millis()); // respond with message of 2 bytes
+  Wire.write(millis()); // respond with message of 2 bytes
   Serial.println("event");
   //state = !state;
   //digitalWrite(17, state);

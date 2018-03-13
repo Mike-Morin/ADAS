@@ -43,7 +43,7 @@ Madgwick filter;
 
 File ADASdatafile;
 
-void ADASbeep(int code) {
+void beep(int code) {
   /*
     Plays informational beeps, codes are integers, negative codes are errors,
     positive codes are purely informational
@@ -228,7 +228,7 @@ void writeData() {
     // NOTE: this doesnt do much in the air
     Serial.println("error opening test.txt");
     ADAS.setError(-9);
-    ADASbeep(-9);
+    beep(-9);
   }
   close(ADASdatafile);
 }
@@ -311,11 +311,11 @@ void setup() {
 
   while (!SD.begin(sdpin)) { //Stop everything if we cant see the SD card!
     Serial.println("Card failed or not present.");
-    ADASbeep(-1);
+    beep(-1);
   }
 
   Serial.println("Card OK");
-  ADASbeep(1);
+  beep(1);
 
   delay(500);
 
