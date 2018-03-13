@@ -200,7 +200,7 @@ void getData(int i) {
     ADASdatabuf[3][i] = convertRawGyro(gx);
     ADASdatabuf[4][i] = convertRawGyro(gy);
     ADASdatabuf[5][i] = convertRawGyro(gz);
-    
+
     float g = 9.81; //in m/s^2
     filter.updateIMU(
       ADASdatabuf[3][i],
@@ -220,7 +220,7 @@ void getData(int i) {
       g_conv = g/g_feel;
       first_time = false;
     }
-    
+
     if (i == 0) { // The altimeter is polled once and the mpu6050 fifo is cleared.
       IMU.resetFIFO();
       ADASdatabuf[9][i] = MS5607alt.getHeightCentiMeters();
@@ -232,7 +232,7 @@ void getData(int i) {
     //10 is vertical position
     if(!ADAS.launched){
     } else {
-  
+
       float prev_vert_velocity = 0;
       if(i != 0){
         prev_vert_velocity = ADASdatabuf[10][i-1];
@@ -241,7 +241,7 @@ void getData(int i) {
       }
       float acc_inline_with_rocket = g_conv*ADASdatabuf[0][i] + g*sin((ADASdatabuf[6][i])*3.14159/180);
       float vertical_acc = acc_inline_with_rocket*sin((-ADASdatabuf[6][i])*3.14159/180);
-      
+
       float prev_t = 0;
       float prev_h = 0;
       if(i != 0){
@@ -254,10 +254,10 @@ void getData(int i) {
       float delta_t = (tsbuf[i] - prev_t)/1000; //in seconds
       float new_vert_height = prev_h + delta_t*prev_vert_velocity;
       float new_vert_velocity = prev_vert_velocity + vertical_acc * delta_t;
-      
+
       ADASdatabuf[10][i] = new_vert_velocity;
       ADASdatabuf[11][i] = new_vert_height;
-      
+
     }
 }
 
@@ -353,7 +353,7 @@ void MotorMove(int direction) {
     0 = stop
     1 = forwards
   */
-  
+
   if (direction == 1) { //forward
     digitalWrite(hbridgeIN1pin, HIGH);
     digitalWrite(hbridgeIN2pin, LOW);
@@ -425,7 +425,7 @@ float height_diff = 1;
 void loop() {
   loopcount++;
   getData(loopcount % 10);
-  if (loopcount%10 == 0) {
+  if (loopcount%10 == 9) { // dump data on the last round, make zafar happy
     writeData();
   }
 
@@ -542,7 +542,7 @@ float PID(float my_height, float my_velocity, float prev_signal, float delta_t){
   if(wanted_velocity == 0){
     return 0;
   }
-  
+
   float cur_signal = (my_velocity-wanted_velocity)*signal_to_ADAS_ratio;//converted to a number between 0 and 1 ish so that its comparable to prev_signal
   float deriv_signal = (cur_signal-prev_signal)/delta_t*signal_to_ADAS_ratio; //cur_sig-prev_sig is approx between 0 and 1, divided by delta t is on the order of 100-1000 so multiply by ///////////NEEED TO FIND TEH FREQUENCY TO MAKE THIS GUUUUUDD
   //don't do integral control for now, not worth it and isn't effective
