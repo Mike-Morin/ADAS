@@ -108,6 +108,7 @@ unsigned long get_time() {
 boolean first_time = true;
 float g_feel;
 float g_conv;
+float initial_height;//in cm
 
 void getData(int i) {
   /*
@@ -148,33 +149,26 @@ void getData(int i) {
     //ADASdatabuf[7][i] = filter.getRoll();
     //ADASdatabuf[8][i] = filter.getYaw();
 
-    if(first_time){
+    if(first_time){//get initial height and g value readings
+      initial_height = MS5607alt.getHeightCentiMeters();
       g_feel = sqrt(pow(ADASdatabuf[0][i],2)+pow(ADASdatabuf[1][i],2)+pow(ADASdatabuf[2][i],2));
       g_conv = g/g_feel;
       first_time = false;
     }
 
-    if (i == 0) { // The altimeter is polled once and the mpu6050 fifo is cleared.
-      IMU.resetFIFO();
-      ADASdatabuf[9][i] = MS5607alt.getHeightCentiMeters();
-    } else {
-      ADASdatabuf[9][i] = ADASdatabuf[9][i - 1];
-    }
+    
     //PID needs the vertical velocity and height
     //9 is vertical velocity
     //10 is vertical position
-    if(!ADAS.isLaunched()){
-    } else {
-
+      
       float prev_vert_velocity = 0;
       if(i != 0){
         prev_vert_velocity = ADASdatabuf[10][i-1];
       } else {
         prev_vert_velocity = ADASdatabuf[10][9];
       }
-      float acc_inline_with_rocket = g_conv*ADASdatabuf[0][i] + g*sin((ADASdatabuf[6][i])*3.14159/180);
-      float vertical_acc = acc_inline_with_rocket*sin((-ADASdatabuf[6][i])*3.14159/180);
-
+      
+      float vertical_acc = g_conv*ADASdatabuf[0][i]-g;
       float prev_t = 0;
       float prev_h = 0;
       if(i != 0){
@@ -191,7 +185,23 @@ void getData(int i) {
       ADASdatabuf[10][i] = new_vert_velocity;
       ADASdatabuf[11][i] = new_vert_height;
 
+      //need to do this every 75ms ish, this is about every 10 iterations
+      if(i == 9 && !ADAS.isLaunched()){//reset the integrator velocity
+        ADASdatabuf[10][i] = 0;
+      }
+      
+      Serial.print(ADASdatabuf[10][i]);
+      Serial.print("       ");
+      Serial.println(ADASdatabuf[11][i]);
+    
+    if (i == 0) { // The altimeter is polled once, the integrated height is reset, and the mpu6050 fifo is cleared.
+      IMU.resetFIFO();
+      ADASdatabuf[9][i] = MS5607alt.getHeightCentiMeters()-initial_height; //in cm
+      ADASdatabuf[11][i] = ADASdatabuf[9][i]/100; //in meters
+    } else {
+      ADASdatabuf[9][i] = ADASdatabuf[9][i - 1];
     }
+    
 }
 
 
@@ -340,9 +350,9 @@ void loop() {
     writeData();
   }
 
-  if(!ADAS.isLaunched()){
-    digitalWrite(beeperpin, HIGH);
-  }
+  //if(!ADAS.isLaunched()){////FOR TESTING
+    //digitalWrite(beeperpin, HIGH);
+  //}
   if (ADAS.isLaunched()) {
     digitalWrite(beeperpin, LOW);
     float prev_deployment = (float)(ADAS.getPos())/ADAS.MAX_POS;  //the ratio of the previous deployment to full deployment
