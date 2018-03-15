@@ -154,6 +154,7 @@ void getData(int i) {
       g_feel = sqrt(pow(ADASdatabuf[0][i],2)+pow(ADASdatabuf[1][i],2)+pow(ADASdatabuf[2][i],2));
       g_conv = g/g_feel;
       first_time = false;
+      initialDataWrite(g_conv, initial_height);
     }
 
     
@@ -205,6 +206,26 @@ void getData(int i) {
 }
 
 
+void initialDataWrite(float g, float height){
+
+  ADASdatafile = open("ADASdata.txt", FILE_WRITE);
+  if (ADASdatafile) {
+    ADASdatafile.print("g: ");
+    ADASdatafile.print(g);
+    ADASdatafile.print("\n");
+    
+    ADASdatafile.print("Initial height (cm): ");
+    ADASdatafile.print(height);
+    ADASdatafile.print("\n");
+  } else {
+    // if the file didn't open, print an error:
+    // NOTE: this doesnt do much in the air
+    Serial.println("error opening test.txt");
+    ADAS.setError(-9);
+    beep(-9);
+  }
+  close(ADASdatafile);
+}
 void writeData() {
   /*
     Writes all the sensor data to SD card
