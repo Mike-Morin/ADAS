@@ -8,6 +8,8 @@
 #include "MadgwickAHRS.h"
 #include "ADAS.h"
 
+#define DEBUG 0 // not in debug mode
+
 const int IMU_UPDATE = 50;
 
 /* Pin defs */
@@ -157,18 +159,18 @@ void getData(int i) {
       initialDataWrite(g_conv, initial_height);
     }
 
-    
+
     //PID needs the vertical velocity and height
     //9 is vertical velocity
     //10 is vertical position
-      
+
       float prev_vert_velocity = 0;
       if(i != 0){
         prev_vert_velocity = ADASdatabuf[10][i-1];
       } else {
         prev_vert_velocity = ADASdatabuf[10][9];
       }
-      
+
       float vertical_acc = g_conv*ADASdatabuf[0][i]-g;
       float prev_t = 0;
       float prev_h = 0;
@@ -190,11 +192,12 @@ void getData(int i) {
       if(i == 9 && !ADAS.isLaunched()){//reset the integrator velocity
         ADASdatabuf[10][i] = 0;
       }
-      
+#if DEBUG
       Serial.print(ADASdatabuf[10][i]);
       Serial.print("       ");
       Serial.println(ADASdatabuf[11][i]);
-    
+#endif
+
     if (i == 0) { // The altimeter is polled once, the integrated height is reset, and the mpu6050 fifo is cleared.
       IMU.resetFIFO();
       ADASdatabuf[9][i] = MS5607alt.getHeightCentiMeters()-initial_height; //in cm
@@ -202,7 +205,7 @@ void getData(int i) {
     } else {
       ADASdatabuf[9][i] = ADASdatabuf[9][i - 1];
     }
-    
+
 }
 
 
@@ -213,14 +216,16 @@ void initialDataWrite(float g, float height){
     ADASdatafile.print("g: ");
     ADASdatafile.print(g);
     ADASdatafile.print("\n");
-    
+
     ADASdatafile.print("Initial height (cm): ");
     ADASdatafile.print(height);
     ADASdatafile.print("\n");
   } else {
     // if the file didn't open, print an error:
     // NOTE: this doesnt do much in the air
+#if DEBUG
     Serial.println("error opening test.txt");
+#endif
     ADAS.setError(-9);
     beep(-9);
   }
@@ -257,7 +262,9 @@ void writeData() {
   } else {
     // if the file didn't open, print an error:
     // NOTE: this doesnt do much in the air
+#if DEBUG
     Serial.println("error opening test.txt");
+#endif
     ADAS.setError(-9);
     beep(-9);
   }
@@ -267,7 +274,7 @@ void onEncoderPulse() {
   ADAS.onPulse();
 }
 void onLaunch() {
-  ADAS.setLaunched();  
+  ADAS.setLaunched();
 }
 
 void AttachInterrupts() {
@@ -341,11 +348,14 @@ void setup() {
   filter.begin(IMU_UPDATE);
 
   while (!SD.begin(sdpin)) { //Stop everything if we cant see the SD card!
+#if DEBUG
     Serial.println("Card failed or not present.");
+#endif
     beep(-1);
   }
-
+#if DEBUG
   Serial.println("Card OK");
+#endif
   beep(1);
 
   delay(500);
